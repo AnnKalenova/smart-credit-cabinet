@@ -107,6 +107,8 @@ def get_application(app_id: uuid.UUID, db: Session = Depends(get_db), user: User
     data["pricing_hints"] = []
     for p in db.scalars(select(Product).where(Product.is_active.is_(True)).order_by(Product.sort_order)):
         params = ProductParams.from_orm(p)
+        if app.purpose not in params.purposes:
+            continue  # предложить можно только продукт под цель заявки — так же проверяет решение
         rate, _ = price(params, grade, kr, app.has_collateral, app.owner_guarantee, tenure)
         data["pricing_hints"].append(
             {

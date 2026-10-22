@@ -18,7 +18,7 @@ from datetime import date
 
 from app.domain.enums import DecisionOutcome
 from app.domain.finance import annuity_principal, floor_to, monthly_rate, offer_economics
-from app.domain.products import NICE_TERMS
+from app.domain.products import NICE_TERMS, pledged
 from app.domain.scoring import ScoringOutcome, months_between
 
 POLICY_VERSION = "credit-policy-1.0"
@@ -147,7 +147,7 @@ def price(
         {"label": f"Надбавка продукта «{product.name}»", "value": product.base_spread},
         {"label": f"Надбавка за риск (рейтинг {grade})", "value": GRADE_PREMIUM[grade]},
     ]
-    if has_collateral or product.collateral == "REQUIRED":
+    if pledged(product, has_collateral):
         parts.append({"label": "Скидка за залог", "value": -1.0})
     if owner_guarantee:
         parts.append({"label": "Скидка за поручительство собственника", "value": -0.5})
@@ -197,7 +197,7 @@ def _conditions(product: ProductParams, amount: float, owner_guarantee: bool, ha
     conds: list[str] = []
     if product.collateral == "REQUIRED":
         conds.append("Залог приобретаемого имущества")
-    elif has_collateral:
+    elif pledged(product, has_collateral):
         # скидка за залог в ставке → залог становится условием предложения
         conds.append("Залог имущества, указанного в заявке")
     if owner_guarantee or (product.code == "WORKING_CAPITAL" and amount > 10_000_000):

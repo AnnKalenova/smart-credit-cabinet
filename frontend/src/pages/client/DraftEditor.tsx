@@ -110,7 +110,9 @@ export function DraftEditor({ app }: { app: Application }) {
     const terms = termOptions(p);
     if (!terms.includes(d.term_months)) set("term_months", terms.reduce((a, b) => (Math.abs(b - d.term_months) < Math.abs(a - d.term_months) ? b : a)), true);
     if (!p.purposes.includes(d.purpose)) set("purpose", p.purposes[0], true);
+    // залог зависит от продукта: сервер выставляет флаг сам, здесь — чтобы форма сразу совпадала
     if (p.collateral === "REQUIRED") setD((prev) => ({ ...prev, has_collateral: true }));
+    if (p.collateral === "NONE") setD((prev) => ({ ...prev, has_collateral: false }));
   };
 
   const consentsSigned = app.consents.length >= 2;
@@ -151,6 +153,8 @@ export function DraftEditor({ app }: { app: Application }) {
   };
 
   const amount = parseAmount(d.amount);
+  // пока в поле нет корректной суммы, отправлять нечего: на сервере осталась бы прежняя
+  const amountValid = amount > 0 && amount <= MAX_AMOUNT;
   const p = profile.data;
 
   return (
@@ -327,7 +331,7 @@ export function DraftEditor({ app }: { app: Application }) {
                   <ShieldCheck size={18} /> Подписать согласия
                 </button>
               )}
-              <button className="btn btn-signal" disabled={!consentsSigned || busy} onClick={submit}>
+              <button className="btn btn-signal" disabled={!consentsSigned || busy || !amountValid} onClick={submit}>
                 <Send size={18} /> Отправить заявку
               </button>
             </div>

@@ -193,7 +193,7 @@ cd ../frontend && npm ci && npm run dev   # http://localhost:5173, /api прок
 ## Тесты
 
 ```bash
-cd backend && pytest                       # 143 теста: 102 модульных + 41 интеграционный
+cd backend && pytest                       # 148 тестов: 103 модульных + 45 интеграционных
 ruff check . && ruff format --check .      # линтер и форматирование
 cd ../frontend && npm run build            # проверка типов TypeScript и сборка
 python e2e/api_scenarios.py --base-url http://localhost:8080   # сквозные сценарии на стенде

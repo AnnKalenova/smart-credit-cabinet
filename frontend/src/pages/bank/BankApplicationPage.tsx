@@ -266,7 +266,7 @@ function Summary({ app }: { app: BankApplication }) {
           <dd>{money(app.declared_revenue)} в год</dd>
           <dt>Обеспечение</dt>
           <dd>
-            {app.collateral_description || (app.has_collateral ? "залог" : "без залога")}
+            {app.has_collateral ? app.collateral_description || "залог" : "без залога"}
             {app.owner_guarantee ? "; поручительство собственника" : ""}
           </dd>
           <dt>Контакт</dt>

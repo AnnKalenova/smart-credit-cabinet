@@ -102,3 +102,21 @@ def test_validation_errors_are_explained_in_russian(login):
     resp = u.call("PATCH", f"/api/v1/applications/{draft['id']}", json={"contact_phone": "1" * 40}, expect=422)
     assert resp["detail"]["problems"] == ["Телефон: слишком длинное значение (не больше 32 символов)"]
     assert u.get(draft["id"])["amount"] == 500_000
+
+
+def test_parallel_wrong_passwords_do_not_bypass_lockout(api):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def attempt(_):
+        return api.post("/api/v1/auth/login", json={"login": "parallel-guess", "password": "wrong"}).status_code
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        codes = list(pool.map(attempt, range(24)))
+    # попытки по одному логину проверяются по очереди: пароль проверен ровно 10 раз
+    assert codes.count(401) == 10 and codes.count(429) == 14
+
+
+def test_unusual_login_does_not_break_login(api):
+    # в нижнем регистре «İ» превращается в два символа: строка становится длиннее колонки
+    resp = api.post("/api/v1/auth/login", json={"login": "İ" * 40, "password": "x"})
+    assert resp.status_code == 401

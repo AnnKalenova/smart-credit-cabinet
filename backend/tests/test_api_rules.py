@@ -167,6 +167,8 @@ def test_analyst_offer_must_fit_application_purpose(login):
     c, a = login("nikitin"), login("analyst")
     app = c.prepare_and_submit("WORKING_CAPITAL", "CONTRACT", 8_000_000, 18, docs=["CONTRACT_COPY"])
     assert app["status"] == "MANUAL_REVIEW"
+    hints = {h["product_code"] for h in a.call("GET", _bank(app))["pricing_hints"]}
+    assert hints == {"WORKING_CAPITAL"}  # под «Исполнить контракт» подходит только оборотный кредит
     resp = a.call(
         "POST",
         _bank(app, "/decision"),
@@ -290,3 +292,37 @@ def test_wrong_status_message_names_current_status(login):
     app = u.prepare_and_submit("EXPRESS", "OTHER", 300_000, 3)
     resp = u.call("POST", _url(app, "/submit"), expect=409)
     assert resp["detail"] == "Действие недоступно: заявка в статусе «Готово предложение». Обновите страницу"
+
+
+def test_collateral_flag_follows_product(login):
+    u = login("smirnov")
+    app = u.draft("INVESTMENT", "EQUIPMENT", 2_000_000, 24)
+    assert app["has_collateral"] is True  # инвестиционный кредит — только с залогом
+    switched = u.call(
+        "PATCH", _url(app), json={"product_code": "EXPRESS", "purpose": "OTHER", "amount": 500_000, "term_months": 6}
+    )
+    assert switched["has_collateral"] is False  # флаг от прежнего продукта сброшен
+    assert u.call("PATCH", _url(app), json={"has_collateral": True})["has_collateral"] is False
+
+    u.sign_consents(app["id"])
+    u.submit(app["id"])
+    drain()
+    app = u.get(app["id"])
+    assert app["status"] == "OFFER_READY"
+    offer = app["offers"][0]
+    assert not any("Залог" in c for c in offer["conditions"])
+    assert all(p["label"] != "Скидка за залог" for p in offer["pricing"]["parts"])
+
+
+def test_only_signer_changes_amount_in_answer_to_bank(login):
+    owner, accountant = login("smirnov"), login("orlova")
+    # заявленная выручка вдвое больше поступлений на счёт — банк просит подтверждение
+    app = owner.prepare_and_submit("EXPRESS", "OTHER", 500_000, 6, declared_revenue=120_000_000)
+    assert app["status"] == "NEEDS_INFO"
+    denied = accountant.call("POST", _url(app, "/info-response"), json={"fields": {"amount": 400_000}}, expect=403)
+    assert denied["detail"].startswith("Изменить сумму или срок кредита может руководитель")
+    # на сам запрос бухгалтер ответить может: приложить выписку и пояснить
+    accountant.demo_doc(app["id"], "BANK_STATEMENT")
+    answered = accountant.call("POST", _url(app, "/info-response"), json={"comment": "Часть выручки — в другом банке"})
+    assert answered["status"] == "PRECHECK" and answered["amount"] == 500_000
+    drain()

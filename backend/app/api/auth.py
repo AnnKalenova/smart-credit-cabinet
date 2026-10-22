@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -45,13 +45,19 @@ def _recent_failures(db: Session, login: str) -> int:
 )
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
     name = body.login.strip().lower()
-    if _recent_failures(db, name) >= LOGIN_FAILURES_LIMIT:
+    key = name[:64]  # строчные буквы в Unicode бывают длиннее исходных — ключ по размеру колонки
+    # Попытки по одному логину проверяются по очереди: параллельные запросы не обходят лимит.
+    # Блокировка транзакционная и снимается при commit.
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"login:{key}"})
+    if _recent_failures(db, key) >= LOGIN_FAILURES_LIMIT:
+        db.rollback()
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много неудачных попыток входа. Попробуйте через 10 минут"
         )
     user = db.scalar(select(User).where(func.lower(User.login) == name))
     ok = verify_password(body.password, user.password_hash if user else _DUMMY_HASH) and bool(user and user.is_active)
-    db.add(LoginAttempt(login=name, success=ok, ip=request.client.host if request.client else None))
+    ip = request.client.host[:64] if request.client and request.client.host else None
+    db.add(LoginAttempt(login=key, success=ok, ip=ip))
     db.commit()
     if not ok:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный логин или пароль")

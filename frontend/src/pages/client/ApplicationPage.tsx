@@ -125,20 +125,25 @@ function InfoRequestPanel({ app }: { app: Application }) {
           </div>
         ))}
         {docTypes.length > 0 && <DocumentsBlock app={app} editable extraTypes={docTypes} newSince={req.created_at} />}
-        {fieldItems.map((i) => (
-          <Field key={i.code} label={i.label}>
-            <input
-              className="input"
-              maxLength={200}
-              value={fields[i.field ?? i.code] ?? ""}
-              onChange={(e) => {
-                const key = i.field ?? i.code;
-                const v = ["declared_revenue", "amount"].includes(key) ? formatInputAmount(e.target.value) : e.target.value;
-                setFields({ ...fields, [key]: v });
-              }}
-            />
-          </Field>
-        ))}
+        {fieldItems.map((i) => {
+          const key = i.field ?? i.code;
+          // сумму и срок отправленной заявки меняет только тот, кто вправе подписывать
+          const signerOnly = ["amount", "term_months"].includes(key) && !app.permissions.can_sign;
+          return (
+            <Field key={i.code} label={i.label} hint={signerOnly ? `Изменить сумму или срок может: ${app.permissions.signers.join(", ")}` : undefined}>
+              <input
+                className="input"
+                maxLength={200}
+                disabled={signerOnly}
+                value={fields[key] ?? ""}
+                onChange={(e) => {
+                  const v = ["declared_revenue", "amount"].includes(key) ? formatInputAmount(e.target.value) : e.target.value;
+                  setFields({ ...fields, [key]: v });
+                }}
+              />
+            </Field>
+          );
+        })}
         <Field label={commentItems[0]?.label ?? "Комментарий для банка (необязательно)"}>
           <textarea className="textarea" maxLength={4000} value={comment} onChange={(e) => setComment(e.target.value)} />
         </Field>
@@ -250,7 +255,7 @@ function Params({ app }: { app: Application }) {
         )}
         <dt>Выручка за год</dt>
         <dd>{money(app.declared_revenue)}</dd>
-        {app.collateral_description && (
+        {app.has_collateral && app.collateral_description && (
           <>
             <dt>Залог</dt>
             <dd>{app.collateral_description}</dd>

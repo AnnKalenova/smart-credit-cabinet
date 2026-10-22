@@ -173,12 +173,8 @@ def test_manual_review_and_analyst_approval(login):
     dossier = a.call("GET", _bank(app))
     assert set(dossier["sources"]) == {"EGRUL", "FNS", "BKI", "INTERNAL"}
     assert dossier["scoring"]["grade"] == "A" and dossier["permissions"]["can_decide"]
-    assert {h["product_code"] for h in dossier["pricing_hints"]} == {
-        "EXPRESS",
-        "WORKING_CAPITAL",
-        "INVESTMENT",
-        "OVERDRAFT",
-    }
+    # подсказки по ставкам — только по продуктам под цель заявки («Купить оборудование»)
+    assert {h["product_code"] for h in dossier["pricing_hints"]} == {"EXPRESS", "INVESTMENT"}
     rec = dossier["decisions"][0]["details"]["offers"][0]
 
     a.call("POST", _bank(app, "/assign"))

@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 
 from app.domain.enums import DOC_TYPES, PURPOSES, ConsentType
 from app.domain.finance import inn_is_valid
-from app.domain.products import required_documents
+from app.domain.products import pledged, required_documents
 
 
 @dataclass
@@ -120,8 +120,7 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
             )
         )
 
-    collateral_needed = product.collateral == "REQUIRED" or app.has_collateral
-    if collateral_needed and not (app.collateral_description or "").strip():
+    if pledged(product, app.has_collateral) and not (app.collateral_description or "").strip():
         checks.append(
             Check(
                 "collateral_description",

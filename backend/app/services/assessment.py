@@ -18,7 +18,7 @@ from app.domain.policy import (
     max_limit,
     price,
 )
-from app.domain.products import required_documents
+from app.domain.products import pledged, required_documents
 from app.domain.scoring import Factor, ScoringInput, ScoringOutcome, TurnoverStats, months_between, turnover_stats
 from app.models import AccountTurnover, Application, Company, EnrichmentResult, Product, ScoringResult
 
@@ -72,7 +72,7 @@ def build_scoring_input(
         egrul=sources.get("EGRUL", {}),
         fns=sources.get("FNS", {}),
         bki=sources.get("BKI", {}),
-        has_collateral=app.has_collateral or app.product.collateral == "REQUIRED",
+        has_collateral=pledged(app.product, app.has_collateral),
         owner_guarantee=app.owner_guarantee,
     )
 

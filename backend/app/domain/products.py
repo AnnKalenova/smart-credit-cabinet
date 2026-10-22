@@ -119,6 +119,12 @@ PRODUCTS_SEED: list[dict] = [
 NICE_TERMS = [3, 6, 9, 12, 18, 24, 30, 36, 48, 60, 72, 84]
 
 
+def pledged(product, has_collateral: bool) -> bool:
+    """Есть ли залог по заявке на этот продукт: при обязательном — всегда, при необязательном — если клиент
+    его предложил, у беззалогового продукта — никогда (даже если флаг остался от другого продукта)."""
+    return product.collateral == "REQUIRED" or (product.collateral == "OPTIONAL" and bool(has_collateral))
+
+
 def required_documents(product, amount: float, purpose: str, company_kind: str) -> list[str]:
     """Какие документы нужны для заявки с такими параметрами."""
     result: list[str] = []

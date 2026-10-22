@@ -27,7 +27,7 @@ from app.domain.enums import (
     Role,
     SignPurpose,
 )
-from app.domain.products import required_documents
+from app.domain.products import pledged, required_documents
 from app.domain.statuses import CLIENT_CANCELLABLE, CLIENT_STATUS
 from app.models import (
     Application,
@@ -176,7 +176,7 @@ def _new_application(db: Session, user: User, body: ApplicationCreate) -> tuple[
         purpose=body.purpose,
         purpose_details=body.purpose_details or (parent.purpose_details if parent else None),
         declared_revenue=(parent.declared_revenue if parent else None) or revenue_estimate(stats.avg_monthly) or None,
-        has_collateral=product.collateral == "REQUIRED" or bool(parent and parent.has_collateral),
+        has_collateral=pledged(product, bool(parent and parent.has_collateral)),
         collateral_description=parent.collateral_description if parent else None,
         owner_guarantee=bool(parent and parent.owner_guarantee),
         contact_name=user.full_name,
@@ -207,13 +207,13 @@ def update_application(
         product = db.get(Product, data["product_code"])
         if product is None or not product.is_active:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Продукт не найден")
-        if product.collateral == "REQUIRED":
-            data["has_collateral"] = True
     if "purpose" in data and data["purpose"] not in PURPOSES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Неизвестная цель кредита")
     for key, value in data.items():
         if key in EDITABLE_FIELDS:
             setattr(app, key, value)
+    # залог зависит от продукта: обязателен — всегда есть, у беззалогового — флаг от прежнего продукта сбрасывается
+    app.has_collateral = pledged(db.get(Product, app.product_code), app.has_collateral)
     db.flush()
     db.refresh(app)
     _commit(db)
@@ -478,7 +478,7 @@ def submit_problems(db: Session, app: Application) -> list[str]:
         problems.append("Укажите выручку за последние 12 месяцев")
     if not (app.contact_name and app.contact_phone):
         problems.append("Укажите контактное лицо и телефон")
-    if (p.collateral == "REQUIRED" or app.has_collateral) and not (app.collateral_description or "").strip():
+    if pledged(p, app.has_collateral) and not (app.collateral_description or "").strip():
         problems.append("Опишите имущество, которое будет в залоге")
     have = {d.doc_type for d in app.documents}
     missing = [DOC_TYPES[t] for t in required_documents(p, amount, app.purpose, app.company.kind) if t not in have]
@@ -530,7 +530,11 @@ def info_response(
     if req is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Нет открытого запроса")
     if body.fields:
-        for key, value in body.fields.model_dump(exclude_unset=True).items():
+        changes = body.fields.model_dump(exclude_unset=True)
+        if any(changes.get(key) for key in ("amount", "term_months")):
+            # сумма и срок — условия, под которыми подписаны согласия и отправлена заявка
+            _require_signer(member, "Изменить сумму или срок кредита", hint=False)
+        for key, value in changes.items():
             if key in INFO_EDITABLE_FIELDS or (key in ("amount", "term_months") and value):
                 setattr(app, key, value)
     # запрошенный документ засчитывается, только если его приложили после запроса банка

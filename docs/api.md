@@ -72,7 +72,7 @@ POST /api/v1/auth/login
 | POST | `/api/v1/applications/{id}/consents` | подписать согласия на запрос в БКИ и обработку данных | DRAFT |
 | POST | `/api/v1/applications/{id}/request-signature` | передать на подпись руководителю (для бухгалтера) | DRAFT, OFFER_READY, SIGNING |
 | POST | `/api/v1/applications/{id}/submit` | отправить заявку | DRAFT → PRECHECK |
-| POST | `/api/v1/applications/{id}/info-response` | ответить на запрос банка (комментарий, поля); запрошенные документы прикладываются после запроса | NEEDS_INFO → PRECHECK |
+| POST | `/api/v1/applications/{id}/info-response` | ответить на запрос банка (комментарий, поля); запрошенные документы прикладываются после запроса; сумму и срок меняет только подписант | NEEDS_INFO → PRECHECK |
 | POST | `/api/v1/applications/{id}/cancel` | отозвать заявку (подписант) или отменить свой черновик | до решения → CANCELLED |
 | POST | `/api/v1/applications/{id}/offers/{offer_id}/accept` | выбрать вариант предложения (подписант) | OFFER_READY → SIGNING |
 | POST | `/api/v1/applications/{id}/offers/decline` | отказаться от предложения (подписант) | OFFER_READY → CLIENT_DECLINED |

@@ -317,3 +317,16 @@ def test_declared_collateral_becomes_offer_condition_with_discount():
 
     investment = evaluate(_input(product="INVESTMENT", purpose="EQUIPMENT", amount=2_000_000, term_months=24))
     assert "Залог приобретаемого имущества" in investment.offers[0].conditions
+
+
+def test_collateral_counts_only_where_product_allows_it():
+    from app.domain.products import pledged
+
+    assert pledged(PRODUCTS["INVESTMENT"], False) is True
+    assert pledged(PRODUCTS["WORKING_CAPITAL"], True) is True
+    assert pledged(PRODUCTS["WORKING_CAPITAL"], False) is False
+    assert pledged(PRODUCTS["EXPRESS"], True) is False  # беззалоговый продукт
+    express = evaluate(_input(product="EXPRESS", purpose="OTHER", amount=500_000, term_months=6, has_collateral=True))
+    offer = express.offers[0]
+    assert not any("Залог" in c for c in offer.conditions)
+    assert all(p["label"] != "Скидка за залог" for p in offer.pricing["parts"])
