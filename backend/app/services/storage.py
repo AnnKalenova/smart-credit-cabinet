@@ -22,8 +22,38 @@ ALLOWED_TYPES = {
 }
 
 
+EXTENSION_TYPES = {ext: ct for ct, ext in ALLOWED_TYPES.items()} | {".jpeg": "image/jpeg"}
+
+ZIP = b"PK\x03\x04"
+OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # контейнер старых форматов Microsoft Office
+SIGNATURES = {
+    "application/pdf": (b"%PDF-",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": (ZIP,),
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (ZIP,),
+    "application/vnd.ms-excel": (OLE,),
+    "application/msword": (OLE,),
+}
+
+
 class StorageError(Exception):
     pass
+
+
+def resolve_type(file_name: str, content_type: str | None) -> str:
+    """Тип файла: из заголовка запроса, а если браузер прислал общий тип — по расширению имени."""
+    if content_type in ALLOWED_TYPES:
+        return content_type
+    ext = Path(file_name or "").suffix.lower()
+    return EXTENSION_TYPES.get(ext, content_type or "application/octet-stream")
+
+
+def content_matches(content: bytes, content_type: str) -> bool:
+    """Содержимое соответствует заявленному формату (сигнатура файла), а не только расширению."""
+    if content_type == "text/plain":
+        return b"\x00" not in content
+    return content.startswith(SIGNATURES.get(content_type, (b"",)))
 
 
 def _root() -> Path:
@@ -39,6 +69,8 @@ def save(application_id: uuid.UUID, content: bytes, content_type: str) -> tuple[
         raise StorageError(f"Файл больше {settings.max_upload_mb} МБ")
     if content_type not in ALLOWED_TYPES:
         raise StorageError("Допустимые форматы: PDF, JPG, PNG, TXT, DOC(X), XLS(X)")
+    if not content_matches(content, content_type):
+        raise StorageError("Содержимое файла не соответствует его формату. Проверьте, что файл не повреждён")
     key = f"{application_id}/{uuid.uuid4().hex}{ALLOWED_TYPES[content_type]}"
     path = _root() / key
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -51,6 +83,16 @@ def path_for(key: str) -> Path:
     if _root().resolve() not in path.parents:
         raise StorageError("Недопустимый путь")
     return path
+
+
+def copy(key: str, application_id: uuid.UUID) -> str:
+    """Копия файла для новой заявки: у каждой заявки свои файлы, удаление в одной не затрагивает другую."""
+    src = path_for(key)
+    new_key = f"{application_id}/{uuid.uuid4().hex}{src.suffix}"
+    dst = _root() / new_key
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(src.read_bytes())
+    return new_key
 
 
 def delete(key: str) -> None:

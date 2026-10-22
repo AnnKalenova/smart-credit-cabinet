@@ -1,23 +1,59 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
 from app.domain.enums import POSITION_LABELS
-from app.models import CompanyMember, User
+from app.models import CompanyMember, LoginAttempt, User
 from app.schemas import DemoAccount, LoginIn, MeOut, TokenOut
-from app.security import create_access_token, get_current_user, verify_password
+from app.security import create_access_token, get_current_user, hash_password, verify_password
 from app.seed import DEMO_ACCOUNTS
+from app.services.workflow import utcnow
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Аутентификация"])
 settings = get_settings()
 
+# Защита от подбора пароля: после 10 неудачных попыток подряд вход по логину закрыт на 10 минут
+LOGIN_FAILURES_LIMIT = 10
+LOGIN_LOCK_WINDOW = timedelta(minutes=10)
+# Для несуществующего логина пароль всё равно проверяется — время ответа не выдаёт, есть ли такой пользователь
+_DUMMY_HASH = hash_password("not-a-real-password")
 
-@router.post("/login", response_model=TokenOut, summary="Вход по логину и паролю")
-def login(body: LoginIn, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.login == body.login.strip()))
-    if user is None or not verify_password(body.password, user.password_hash) or not user.is_active:
+
+def _recent_failures(db: Session, login: str) -> int:
+    since = utcnow() - LOGIN_LOCK_WINDOW
+    last_success = db.scalar(
+        select(func.max(LoginAttempt.created_at)).where(LoginAttempt.login == login, LoginAttempt.success.is_(True))
+    )
+    if last_success and last_success > since:
+        since = last_success
+    return db.scalar(
+        select(func.count())
+        .select_from(LoginAttempt)
+        .where(LoginAttempt.login == login, LoginAttempt.success.is_(False), LoginAttempt.created_at > since)
+    )
+
+
+@router.post(
+    "/login",
+    response_model=TokenOut,
+    summary="Вход по логину и паролю",
+    responses={401: {"description": "Неверный логин или пароль"}, 429: {"description": "Слишком много попыток"}},
+)
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
+    name = body.login.strip().lower()
+    if _recent_failures(db, name) >= LOGIN_FAILURES_LIMIT:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много неудачных попыток входа. Попробуйте через 10 минут"
+        )
+    user = db.scalar(select(User).where(func.lower(User.login) == name))
+    ok = verify_password(body.password, user.password_hash if user else _DUMMY_HASH) and bool(user and user.is_active)
+    db.add(LoginAttempt(login=name, success=ok, ip=request.client.host if request.client else None))
+    db.commit()
+    if not ok:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный логин или пароль")
     return {"access_token": create_access_token(user), "user": user}
 

@@ -53,3 +53,52 @@ def test_client_cannot_see_other_company_data(login):
     )
     # банк не видит неотправленные черновики
     login("analyst").call("GET", f"/api/v1/bank/applications/{app['id']}", expect=404)
+
+
+def test_login_is_case_insensitive(api):
+    assert api.post("/api/v1/auth/login", json={"login": " Smirnov ", "password": "demo1234"}).status_code == 200
+
+
+def test_login_is_locked_after_repeated_failures(api, login):
+    from sqlalchemy import delete
+
+    from app.db import SessionLocal
+    from app.models import LoginAttempt
+
+    login("fedorov")  # токен кэшируется для остальных тестов
+    try:
+        for _ in range(10):
+            assert api.post("/api/v1/auth/login", json={"login": "fedorov", "password": "wrong"}).status_code == 401
+        locked = api.post("/api/v1/auth/login", json={"login": "Fedorov", "password": "demo1234"})
+        assert locked.status_code == 429 and "10 минут" in locked.json()["detail"]
+        # блокировка — по логину: другие пользователи входят как обычно
+        assert api.post("/api/v1/auth/login", json={"login": "morozov", "password": "demo1234"}).status_code == 200
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(LoginAttempt).where(LoginAttempt.login == "fedorov"))
+            db.commit()
+    assert api.post("/api/v1/auth/login", json={"login": "fedorov", "password": "demo1234"}).status_code == 200
+
+
+def test_successful_login_resets_failure_counter(api):
+    for _ in range(2):
+        for _ in range(9):
+            assert api.post("/api/v1/auth/login", json={"login": "risk", "password": "wrong"}).status_code == 401
+        assert api.post("/api/v1/auth/login", json={"login": "risk", "password": "demo1234"}).status_code == 200
+
+
+def test_validation_errors_are_explained_in_russian(login):
+    u = login("smirnov")
+    body = {"company_id": u.company_id, "product_code": "EXPRESS", "purpose": "OTHER", "term_months": 6}
+    resp = u.call("POST", "/api/v1/applications", json={**body, "amount": 1e30}, expect=422)
+    assert resp["detail"]["message"] == "Проверьте введённые данные"
+    assert resp["detail"]["problems"] == ["Сумма: должно быть не больше 10 000 000 000"]
+    resp = u.call("POST", "/api/v1/applications", json={**body, "amount": "много"}, expect=422)
+    assert resp["detail"]["problems"] == ["Сумма: должно быть числом"]
+
+    draft = u.draft("EXPRESS", "OTHER", 500_000, 6)
+    resp = u.call("PATCH", f"/api/v1/applications/{draft['id']}", json={"amount": None}, expect=422)
+    assert "нельзя оставить пустым: сумма" in resp["detail"]["problems"][0]
+    resp = u.call("PATCH", f"/api/v1/applications/{draft['id']}", json={"contact_phone": "1" * 40}, expect=422)
+    assert resp["detail"]["problems"] == ["Телефон: слишком длинное значение (не больше 32 символов)"]
+    assert u.get(draft["id"])["amount"] == 500_000

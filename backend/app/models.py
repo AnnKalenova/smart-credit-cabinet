@@ -420,6 +420,18 @@ class ApplicationEvent(TimestampMixin, Base):
     actor: Mapped[User | None] = relationship()
 
 
+class LoginAttempt(TimestampMixin, Base):
+    """Попытки входа: защита от подбора пароля и журнал входов."""
+
+    __tablename__ = "login_attempts"
+    __table_args__ = (Index("ix_login_attempts_login", "login", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    login: Mapped[str] = mapped_column(String(64), nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(64))
+
+
 class Notification(TimestampMixin, Base):
     __tablename__ = "notifications"
     __table_args__ = (Index("ix_notifications_user", "user_id", "is_read"),)
