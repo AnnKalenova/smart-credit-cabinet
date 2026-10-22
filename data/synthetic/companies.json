@@ -1,0 +1,673 @@
+{
+  "_comment": "Синтетические данные. Сгенерировано tools/generate_synthetic_data.py — не редактируйте вручную.",
+  "demo_password": "demo1234",
+  "companies": [
+    {
+      "key": "bakery",
+      "scenario": "Автоматическое одобрение",
+      "scenario_hint": "Оборотный кредит 3 млн ₽ на 12 мес. — решение за несколько секунд без участия сотрудника",
+      "inn": "0000104715",
+      "ogrn": "1180000104712",
+      "kind": "LEGAL",
+      "short_name": "ООО «Северный хлеб»",
+      "full_name": "Общество с ограниченной ответственностью «Северный хлеб»",
+      "okved": {
+        "code": "10.71",
+        "name": "Производство хлеба и мучных кондитерских изделий недлительного хранения"
+      },
+      "registration": {
+        "months_ago": 103,
+        "day": 14
+      },
+      "client_since": {
+        "months_ago": 92,
+        "day": 1
+      },
+      "address": "603000, Нижегородская обл., г. Нижний Новгород, ул. Пекарская, д. 12",
+      "segment": "Малое предприятие",
+      "headcount": 28,
+      "settlement_account": "40702810000000001001",
+      "turnover": {
+        "base": 4500000,
+        "monthly_growth": 0.008,
+        "noise": 0.05,
+        "seed": 101,
+        "months": 12,
+        "debit_ratio": 0.94
+      },
+      "egrul": {
+        "status": "ACTIVE",
+        "status_text": "Действующее",
+        "director": {
+          "name": "Смирнов Алексей Викторович",
+          "position": "Генеральный директор",
+          "since": {
+            "months_ago": 103,
+            "day": 14
+          }
+        },
+        "founders": [
+          {
+            "name": "Смирнов Алексей Викторович",
+            "share": 70
+          },
+          {
+            "name": "Смирнова Елена Николаевна",
+            "share": 30
+          }
+        ],
+        "authorized_capital": 10000
+      },
+      "fns": {
+        "tax_regime": "УСН «доходы минус расходы»",
+        "smb_category": "Малое предприятие",
+        "avg_headcount": 28,
+        "revenue_last_year": 52400000,
+        "net_profit_last_year": 5700000,
+        "tax_arrears": 0,
+        "suspended_accounts": false,
+        "mass_address": false,
+        "unreliable_data": false,
+        "disqualified_persons": false
+      },
+      "bki": {
+        "score": 768,
+        "history_length_months": 64,
+        "inquiries_30d": 1,
+        "max_overdue_days_12m": 0,
+        "max_overdue_days_ever": 3,
+        "current_overdue_days": 0,
+        "loans": [
+          {
+            "creditor": "Банк «Восток» (синтетический)",
+            "type": "Кредит на оборудование",
+            "amount": 2500000,
+            "outstanding": 620000,
+            "monthly_payment": 78000,
+            "opened": {
+              "months_ago": 31,
+              "day": 15
+            },
+            "status": "ACTIVE",
+            "max_overdue_days_12m": 0
+          }
+        ]
+      },
+      "users": [
+        {
+          "login": "smirnov",
+          "full_name": "Смирнов Алексей Викторович",
+          "position": "DIRECTOR",
+          "can_sign": true,
+          "phone": "+7 900 000-01-01"
+        },
+        {
+          "login": "orlova",
+          "full_name": "Орлова Мария Петровна",
+          "position": "ACCOUNTANT",
+          "can_sign": false,
+          "phone": "+7 900 000-01-02"
+        }
+      ],
+      "demo_request": {
+        "product_code": "WORKING_CAPITAL",
+        "purpose": "WORKING_CAPITAL",
+        "amount": 3000000,
+        "term_months": 12,
+        "purpose_details": "Закупка муки и сахара перед новогодним сезоном"
+      }
+    },
+    {
+      "key": "salon",
+      "scenario": "Встречное предложение",
+      "scenario_hint": "Экспресс-кредит 1 млн ₽ на 12 мес. — нагрузка высокая, банк предложит больший срок или меньшую сумму",
+      "inn": "000022051231",
+      "ogrn": "324000002205122",
+      "kind": "IP",
+      "short_name": "ИП Кузнецова А. С.",
+      "full_name": "Индивидуальный предприниматель Кузнецова Анна Сергеевна",
+      "okved": {
+        "code": "96.02",
+        "name": "Предоставление услуг парикмахерскими и салонами красоты"
+      },
+      "registration": {
+        "months_ago": 32,
+        "day": 12
+      },
+      "client_since": {
+        "months_ago": 31,
+        "day": 1
+      },
+      "address": "603005, Нижегородская обл., г. Нижний Новгород, ул. Садовая, д. 7, пом. 3",
+      "segment": "Микропредприятие",
+      "headcount": 7,
+      "settlement_account": "40802810000000002002",
+      "turnover": {
+        "base": 950000,
+        "monthly_growth": 0.0,
+        "noise": 0.08,
+        "seed": 202,
+        "months": 12,
+        "debit_ratio": 0.97
+      },
+      "egrul": {
+        "status": "ACTIVE",
+        "status_text": "Действующий ИП",
+        "director": {
+          "name": "Кузнецова Анна Сергеевна",
+          "position": "Индивидуальный предприниматель",
+          "since": {
+            "months_ago": 32,
+            "day": 12
+          }
+        },
+        "founders": [],
+        "authorized_capital": null
+      },
+      "fns": {
+        "tax_regime": "УСН «доходы»",
+        "smb_category": "Микропредприятие",
+        "avg_headcount": 7,
+        "revenue_last_year": 10900000,
+        "net_profit_last_year": null,
+        "tax_arrears": 0,
+        "suspended_accounts": false,
+        "mass_address": false,
+        "unreliable_data": false,
+        "disqualified_persons": false
+      },
+      "bki": {
+        "score": 702,
+        "history_length_months": 46,
+        "inquiries_30d": 2,
+        "max_overdue_days_12m": 0,
+        "max_overdue_days_ever": 0,
+        "current_overdue_days": 0,
+        "loans": [
+          {
+            "creditor": "Банк «Ока» (синтетический)",
+            "type": "Кредит на развитие бизнеса",
+            "amount": 2000000,
+            "outstanding": 1150000,
+            "monthly_payment": 88000,
+            "opened": {
+              "months_ago": 14,
+              "day": 3
+            },
+            "status": "ACTIVE",
+            "max_overdue_days_12m": 0
+          },
+          {
+            "creditor": "Лизинговая компания «Опора» (синтетическая)",
+            "type": "Лизинг оборудования",
+            "amount": 3400000,
+            "outstanding": 2300000,
+            "monthly_payment": 145000,
+            "opened": {
+              "months_ago": 9,
+              "day": 20
+            },
+            "status": "ACTIVE",
+            "max_overdue_days_12m": 0
+          },
+          {
+            "creditor": "Банк «Ока» (синтетический)",
+            "type": "Автокредит (физлицо)",
+            "amount": 1800000,
+            "outstanding": 950000,
+            "monthly_payment": 52000,
+            "opened": {
+              "months_ago": 26,
+              "day": 8
+            },
+            "status": "ACTIVE",
+            "max_overdue_days_12m": 0
+          }
+        ]
+      },
+      "users": [
+        {
+          "login": "kuznetsova",
+          "full_name": "Кузнецова Анна Сергеевна",
+          "position": "OWNER",
+          "can_sign": true,
+          "phone": "+7 900 000-02-01"
+        }
+      ],
+      "demo_request": {
+        "product_code": "EXPRESS",
+        "purpose": "EXPANSION",
+        "amount": 1000000,
+        "term_months": 12,
+        "purpose_details": "Ремонт второго зала и покупка трёх парикмахерских кресел"
+      }
+    },
+    {
+      "key": "technomash",
+      "scenario": "Ручное рассмотрение → одобрение",
+      "scenario_hint": "Инвестиционный кредит 25 млн ₽ на 60 мес. — сумма выше лимита автоматического решения, решение принимает аналитик",
+      "inn": "0000284112",
+      "ogrn": "1160000284113",
+      "kind": "LEGAL",
+      "short_name": "ООО «ТехноМаш НН»",
+      "full_name": "Общество с ограниченной ответственностью «ТехноМаш НН»",
+      "okved": {
+        "code": "28.41",
+        "name": "Производство металлообрабатывающего оборудования"
+      },
+      "registration": {
+        "months_ago": 121,
+        "day": 1
+      },
+      "client_since": {
+        "months_ago": 117,
+        "day": 10
+      },
+      "address": "603109, Нижегородская обл., г. Нижний Новгород, ул. Станкостроительная, д. 4, корп. 2",
+      "segment": "Малое предприятие",
+      "headcount": 64,
+      "settlement_account": "40702810000000003003",
+      "turnover": {
+        "base": 18500000,
+        "monthly_growth": 0.015,
+        "noise": 0.06,
+        "seed": 303,
+        "months": 12,
+        "debit_ratio": 0.95
+      },
+      "egrul": {
+        "status": "ACTIVE",
+        "status_text": "Действующее",
+        "director": {
+          "name": "Лебедев Игорь Олегович",
+          "position": "Генеральный директор",
+          "since": {
+            "months_ago": 121,
+            "day": 1
+          }
+        },
+        "founders": [
+          {
+            "name": "Лебедев Игорь Олегович",
+            "share": 51
+          },
+          {
+            "name": "Захаров Павел Андреевич",
+            "share": 49
+          }
+        ],
+        "authorized_capital": 500000
+      },
+      "fns": {
+        "tax_regime": "ОСН",
+        "smb_category": "Малое предприятие",
+        "avg_headcount": 64,
+        "revenue_last_year": 228000000,
+        "net_profit_last_year": 24100000,
+        "tax_arrears": 0,
+        "suspended_accounts": false,
+        "mass_address": false,
+        "unreliable_data": false,
+        "disqualified_persons": false
+      },
+      "bki": {
+        "score": 791,
+        "history_length_months": 96,
+        "inquiries_30d": 1,
+        "max_overdue_days_12m": 0,
+        "max_overdue_days_ever": 0,
+        "current_overdue_days": 0,
+        "loans": [
+          {
+            "creditor": "Лизинговая компания «Станок-Финанс» (синтетическая)",
+            "type": "Лизинг",
+            "amount": 9800000,
+            "outstanding": 3200000,
+            "monthly_payment": 185000,
+            "opened": {
+              "months_ago": 40,
+              "day": 18
+            },
+            "status": "ACTIVE",
+            "max_overdue_days_12m": 0
+          }
+        ]
+      },
+      "users": [
+        {
+          "login": "lebedev",
+          "full_name": "Лебедев Игорь Олегович",
+          "position": "DIRECTOR",
+          "can_sign": true,
+          "phone": "+7 900 000-03-01"
+        }
+      ],
+      "demo_request": {
+        "product_code": "INVESTMENT",
+        "purpose": "EQUIPMENT",
+        "amount": 25000000,
+        "term_months": 60,
+        "purpose_details": "Покупка обрабатывающего центра с ЧПУ для участка мехобработки",
+        "collateral_description": "Обрабатывающий центр с ЧПУ, поставщик ООО «СтанкоИмпорт» (синт.), стоимость 31 млн ₽"
+      }
+    },
+    {
+      "key": "stroy",
+      "scenario": "Ручное рассмотрение: повышенный риск",
+      "scenario_hint": "Оборотный кредит 8 млн ₽ на 18 мес. под контракт — налоговый долг и смена директора, решает аналитик",
+      "inn": "0000412075",
+      "ogrn": "1220000412070",
+      "kind": "LEGAL",
+      "short_name": "ООО «Стройресурс»",
+      "full_name": "Общество с ограниченной ответственностью «Стройресурс»",
+      "okved": {
+        "code": "41.20",
+        "name": "Строительство жилых и нежилых зданий"
+      },
+      "registration": {
+        "months_ago": 47,
+        "day": 10
+      },
+      "client_since": {
+        "months_ago": 44,
+        "day": 1
+      },
+      "address": "603022, Нижегородская обл., г. Нижний Новгород, ул. Строителей, д. 21, оф. 5",
+      "segment": "Малое предприятие",
+      "headcount": 35,
+      "settlement_account": "40702810000000004004",
+      "turnover": {
+        "base": 5200000,
+        "monthly_growth": 0.0,
+        "noise": 0.22,
+        "seed": 404,
+        "months": 12,
+        "debit_ratio": 0.98
+      },
+      "egrul": {
+        "status": "ACTIVE",
+        "status_text": "Действующее",
+        "director": {
+          "name": "Никитин Роман Валерьевич",
+          "position": "Генеральный директор",
+          "since": {
+            "months_ago": 2,
+            "day": 5
+          }
+        },
+        "previous_director": {
+          "name": "Гусев Олег Петрович",
+          "until": {
+            "months_ago": 2,
+            "day": 5
+          }
+        },
+        "founders": [
+          {
+            "name": "Гусев Олег Петрович",
+            "share": 100
+          }
+        ],
+        "authorized_capital": 10000
+      },
+      "fns": {
+        "tax_regime": "ОСН",
+        "smb_category": "Малое предприятие",
+        "avg_headcount": 35,
+        "revenue_last_year": 61000000,
+        "net_profit_last_year": 6800000,
+        "tax_arrears": 420000,
+        "suspended_accounts": false,
+        "mass_address": false,
+        "unreliable_data": false,
+        "disqualified_persons": false
+      },
+      "bki": {
+        "score": 611,
+        "history_length_months": 40,
+        "inquiries_30d": 2,
+        "max_overdue_days_12m": 18,
+        "max_overdue_days_ever": 18,
+        "current_overdue_days": 0,
+        "loans": [
+          {
+            "creditor": "Банк «Волга» (синтетический)",
+            "type": "Кредитная линия",
+            "amount": 6000000,
+            "outstanding": 3900000,
+            "monthly_payment": 410000,
+            "opened": {
+              "months_ago": 15,
+              "day": 11
+            },
+            "status": "ACTIVE",
+            "max_overdue_days_12m": 18
+          },
+          {
+            "creditor": "Банк «Ока» (синтетический)",
+            "type": "Кредит на спецтехнику",
+            "amount": 4200000,
+            "outstanding": 2100000,
+            "monthly_payment": 230000,
+            "opened": {
+              "months_ago": 22,
+              "day": 2
+            },
+            "status": "ACTIVE",
+            "max_overdue_days_12m": 0
+          }
+        ]
+      },
+      "users": [
+        {
+          "login": "nikitin",
+          "full_name": "Никитин Роман Валерьевич",
+          "position": "DIRECTOR",
+          "can_sign": true,
+          "phone": "+7 900 000-04-01"
+        }
+      ],
+      "demo_request": {
+        "product_code": "WORKING_CAPITAL",
+        "purpose": "CONTRACT",
+        "amount": 8000000,
+        "term_months": 18,
+        "purpose_details": "Закупка материалов под муниципальный контракт на ремонт школы"
+      }
+    },
+    {
+      "key": "vector",
+      "scenario": "Автоматический отказ",
+      "scenario_hint": "Экспресс-кредит 2 млн ₽ — компания в стадии ликвидации, стоп-фактор",
+      "inn": "0000494102",
+      "ogrn": "1150000494104",
+      "kind": "LEGAL",
+      "short_name": "ООО «Вектор Логистик»",
+      "full_name": "Общество с ограниченной ответственностью «Вектор Логистик»",
+      "okved": {
+        "code": "49.41",
+        "name": "Деятельность автомобильного грузового транспорта"
+      },
+      "registration": {
+        "months_ago": 137,
+        "day": 20
+      },
+      "client_since": {
+        "months_ago": 102,
+        "day": 1
+      },
+      "address": "603140, Нижегородская обл., г. Нижний Новгород, ул. Складская, д. 3",
+      "segment": "Малое предприятие",
+      "headcount": 19,
+      "settlement_account": "40702810000000005005",
+      "turnover": {
+        "base": 3400000,
+        "monthly_growth": -0.05,
+        "noise": 0.1,
+        "seed": 505,
+        "months": 12,
+        "debit_ratio": 1.02
+      },
+      "egrul": {
+        "status": "LIQUIDATING",
+        "status_text": "Находится в стадии ликвидации",
+        "status_since": {
+          "months_ago": 1,
+          "day": 10
+        },
+        "director": {
+          "name": "Фёдоров Антон Игоревич",
+          "position": "Ликвидатор",
+          "since": {
+            "months_ago": 1,
+            "day": 10
+          }
+        },
+        "founders": [
+          {
+            "name": "Фёдоров Антон Игоревич",
+            "share": 100
+          }
+        ],
+        "authorized_capital": 20000
+      },
+      "fns": {
+        "tax_regime": "ОСН",
+        "smb_category": "Малое предприятие",
+        "avg_headcount": 19,
+        "revenue_last_year": 31000000,
+        "net_profit_last_year": -2400000,
+        "tax_arrears": 1600000,
+        "suspended_accounts": false,
+        "mass_address": false,
+        "unreliable_data": false,
+        "disqualified_persons": false
+      },
+      "bki": {
+        "score": 540,
+        "history_length_months": 70,
+        "inquiries_30d": 4,
+        "max_overdue_days_12m": 25,
+        "max_overdue_days_ever": 25,
+        "current_overdue_days": 0,
+        "loans": []
+      },
+      "users": [
+        {
+          "login": "fedorov",
+          "full_name": "Фёдоров Антон Игоревич",
+          "position": "DIRECTOR",
+          "can_sign": true,
+          "phone": "+7 900 000-05-01"
+        }
+      ],
+      "demo_request": {
+        "product_code": "EXPRESS",
+        "purpose": "WORKING_CAPITAL",
+        "amount": 2000000,
+        "term_months": 24,
+        "purpose_details": "Оплата топлива и ремонта грузовиков"
+      }
+    },
+    {
+      "key": "coffee",
+      "scenario": "Запрос уточнений → одобрение",
+      "scenario_hint": "Овердрафт 350 тыс. ₽ — выручка в заявке больше оборотов по счёту, банк попросит выписку из другого банка",
+      "inn": "000056301190",
+      "ogrn": "325000005630117",
+      "kind": "IP",
+      "short_name": "ИП Морозов Д. И.",
+      "full_name": "Индивидуальный предприниматель Морозов Дмитрий Игоревич",
+      "okved": {
+        "code": "56.30",
+        "name": "Подача напитков"
+      },
+      "registration": {
+        "months_ago": 11,
+        "day": 18
+      },
+      "client_since": {
+        "months_ago": 10,
+        "day": 1
+      },
+      "address": "603001, Нижегородская обл., г. Нижний Новгород, ул. Набережная, д. 9",
+      "segment": "Микропредприятие",
+      "headcount": 5,
+      "settlement_account": "40802810000000006006",
+      "turnover": {
+        "base": 560000,
+        "monthly_growth": 0.03,
+        "noise": 0.04,
+        "seed": 606,
+        "months": 10,
+        "debit_ratio": 0.96
+      },
+      "egrul": {
+        "status": "ACTIVE",
+        "status_text": "Действующий ИП",
+        "director": {
+          "name": "Морозов Дмитрий Игоревич",
+          "position": "Индивидуальный предприниматель",
+          "since": {
+            "months_ago": 11,
+            "day": 18
+          }
+        },
+        "founders": [],
+        "authorized_capital": null
+      },
+      "fns": {
+        "tax_regime": "УСН «доходы»",
+        "smb_category": "Микропредприятие",
+        "avg_headcount": 5,
+        "revenue_last_year": 650000,
+        "net_profit_last_year": null,
+        "tax_arrears": 0,
+        "suspended_accounts": false,
+        "mass_address": false,
+        "unreliable_data": false,
+        "disqualified_persons": false
+      },
+      "bki": {
+        "score": null,
+        "history_length_months": 0,
+        "inquiries_30d": 1,
+        "max_overdue_days_12m": 0,
+        "max_overdue_days_ever": 0,
+        "current_overdue_days": 0,
+        "loans": []
+      },
+      "users": [
+        {
+          "login": "morozov",
+          "full_name": "Морозов Дмитрий Игоревич",
+          "position": "OWNER",
+          "can_sign": true,
+          "phone": "+7 900 000-06-01"
+        }
+      ],
+      "demo_request": {
+        "product_code": "OVERDRAFT",
+        "purpose": "CASH_GAP",
+        "amount": 350000,
+        "term_months": 12,
+        "purpose_details": "Подстраховка на время поставок зерна и молока",
+        "declared_revenue": 14400000
+      }
+    }
+  ],
+  "staff": [
+    {
+      "login": "analyst",
+      "full_name": "Волкова Ирина Андреевна",
+      "role": "ANALYST",
+      "title": "Кредитный аналитик (андеррайтер)"
+    },
+    {
+      "login": "risk",
+      "full_name": "Белов Сергей Николаевич",
+      "role": "RISK_MANAGER",
+      "title": "Риск-менеджер: параметры политики"
+    }
+  ]
+}
