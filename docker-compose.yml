@@ -1,0 +1,108 @@
+# Умный кредитный кабинет предпринимателя — запуск всех компонентов одной командой:
+#   docker compose up -d --build
+# Интерфейс: http://localhost:8080   Swagger: http://localhost:8080/api/docs
+# Настройки — переменные окружения или файл .env рядом с этим файлом (см. .env.example).
+
+name: smart-credit-cabinet
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-docker}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-credit}:${POSTGRES_PASSWORD:-credit}@db:5432/${POSTGRES_DB:-credit}
+  JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me-0123456789abcdef}
+  JWT_TTL_MINUTES: ${JWT_TTL_MINUTES:-480}
+  INTEGRATIONS_BASE_URL: http://integrations-mock:8001
+  INTEGRATION_TIMEOUT_SECONDS: ${INTEGRATION_TIMEOUT_SECONDS:-5}
+  INTEGRATION_MAX_ATTEMPTS: ${INTEGRATION_MAX_ATTEMPTS:-5}
+  INTEGRATION_BACKOFF_BASE_SECONDS: ${INTEGRATION_BACKOFF_BASE_SECONDS:-2}
+  PIPELINE_STAGE_DELAY_SECONDS: ${PIPELINE_STAGE_DELAY_SECONDS:-1.2}
+  WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-0.5}
+  DEMO_MODE: ${DEMO_MODE:-true}
+  SEED_ON_START: ${SEED_ON_START:-true}
+  DEFAULT_KEY_RATE: ${DEFAULT_KEY_RATE:-14.0}
+  OFFER_VALID_DAYS: ${OFFER_VALID_DAYS:-10}
+  MANUAL_REVIEW_SLA_HOURS: ${MANUAL_REVIEW_SLA_HOURS:-4}
+  SIGN_CODE_TTL_SECONDS: ${SIGN_CODE_TTL_SECONDS:-300}
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LLM_ENABLED: ${LLM_ENABLED:-false}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-credit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-credit}
+      POSTGRES_DB: ${POSTGRES_DB:-credit}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  integrations-mock:
+    build:
+      context: .
+      dockerfile: integrations-mock/Dockerfile
+    image: smart-credit-cabinet/integrations-mock:1.0.0
+    environment:
+      MOCK_LATENCY_MIN_MS: ${MOCK_LATENCY_MIN_MS:-150}
+      MOCK_LATENCY_MAX_MS: ${MOCK_LATENCY_MAX_MS:-600}
+    ports:
+      - "127.0.0.1:${MOCK_PORT:-8001}:8001"  # Swagger симулятора: http://localhost:8001/docs
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: smart-credit-cabinet/backend:1.0.0
+    command: ["api"]
+    environment:
+      <<: *backend-env
+    volumes:
+      - uploads:/data/uploads
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"  # прямой доступ к API для отладки
+    depends_on:
+      db:
+        condition: service_healthy
+      integrations-mock:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: smart-credit-cabinet/backend:1.0.0
+    command: ["worker"]
+    environment:
+      <<: *backend-env
+    healthcheck:
+      disable: true  # воркер не слушает HTTP; его состояние видно по очереди в /metrics и дашборду банка
+    depends_on:
+      api:
+        condition: service_healthy  # миграции выполняет api при старте
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+    image: smart-credit-cabinet/web:1.0.0
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  uploads:

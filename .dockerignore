@@ -1,0 +1,18 @@
+# Контекст сборки backend и integrations-mock — корень репозитория
+.git
+.github
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.env
+.env*
+!.env.example
+venv
+.venv
+frontend
+docs
+e2e
+backend/tests
+data/uploads
+**/node_modules
