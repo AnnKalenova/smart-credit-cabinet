@@ -58,7 +58,7 @@ def _load_mock_module():
 MOCK = _load_mock_module()
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def database():
     """Чистая схема → миграции Alembic → синтетические данные."""
     from alembic import command
@@ -83,7 +83,7 @@ def database():
     yield
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def external_systems_in_process(database):
     """Адаптер внешних систем ходит в симулятор внутри процесса вместо сети."""
     import httpx
@@ -113,7 +113,8 @@ def reset_faults():
 
 
 @pytest.fixture(scope="session")
-def api():
+def api(external_systems_in_process):
+    """API в процессе. Тянет за собой БД и симулятор — модульным тестам они не нужны."""
     from fastapi.testclient import TestClient
 
     from app.main import app

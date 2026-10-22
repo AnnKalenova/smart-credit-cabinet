@@ -25,10 +25,6 @@ x-backend-env: &backend-env
   MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
-  LLM_ENABLED: ${LLM_ENABLED:-false}
-  LLM_BASE_URL: ${LLM_BASE_URL:-}
-  LLM_API_KEY: ${LLM_API_KEY:-}
-  LLM_MODEL: ${LLM_MODEL:-}
 
 services:
   db:
@@ -86,7 +82,16 @@ services:
     environment:
       <<: *backend-env
     healthcheck:
-      disable: true  # воркер не слушает HTTP; его состояние видно по очереди в /metrics и дашборду банка
+      # воркер не слушает HTTP: он раз в 5 с обновляет файл-пульс, если очередь в БД доступна
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, sys, time; p = '/tmp/worker-heartbeat'; sys.exit(0 if os.path.exists(p) and time.time() - os.path.getmtime(p) < 60 else 1)"
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     depends_on:
       api:
         condition: service_healthy  # миграции выполняет api при старте

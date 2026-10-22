@@ -5,6 +5,7 @@ venv/
 .env
 node_modules/
 frontend/dist/
+*.tsbuildinfo
 .pytest_cache/
 .ruff_cache/
 *.log

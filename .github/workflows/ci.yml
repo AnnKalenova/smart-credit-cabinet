@@ -53,6 +53,10 @@ jobs:
         run: ruff format --check . ../integrations-mock ../e2e ../tools
       - name: Pytest — модульные и интеграционные тесты
         run: pytest
+      - name: OpenAPI в docs/ совпадает с кодом
+        run: |
+          python ../tools/export_openapi.py
+          git diff --exit-code -- ../docs/openapi.json ../docs/openapi-integrations-mock.json
 
   frontend:
     name: Frontend — сборка
@@ -84,7 +88,7 @@ jobs:
           python-version: "3.13"
       - name: Сквозные сценарии через веб-шлюз (nginx → API)
         run: |
-          pip install httpx
+          pip install httpx==0.28.1
           python e2e/api_scenarios.py --base-url http://localhost:8080
       - name: Postman-коллекция (newman)
         run: npx --yes newman@6.2.3 run docs/postman/smart-credit-cabinet.postman_collection.json --env-var baseUrl=http://localhost:8080
@@ -93,6 +97,12 @@ jobs:
           curl -fsS http://localhost:8080/ | grep -qi "<!doctype html"
           curl -fsS http://localhost:8080/api/openapi.json > /dev/null
           curl -fsS http://localhost:8080/health/ready
+      - name: Метрики доступны только напрямую с API, не через веб-шлюз
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/metrics)" = "403"
+          curl -fsS http://localhost:8000/metrics | grep -q pipeline_queue_depth
+      - name: Воркер здоров (файл-пульс)
+        run: test "$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q worker)")" = "healthy"
       - name: Логи контейнеров при ошибке
         if: failure()
         run: docker compose logs --no-color --timestamps

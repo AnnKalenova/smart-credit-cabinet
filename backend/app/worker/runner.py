@@ -14,6 +14,7 @@ import logging
 import signal
 import time
 from datetime import timedelta
+from pathlib import Path
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -125,6 +126,25 @@ def _on_error(db: Session, job_id: int, error: Exception) -> None:
     db.commit()
 
 
+class Heartbeat:
+    """Раз в несколько секунд обновляет файл-пульс: воркер жив и достучался до очереди в БД."""
+
+    def __init__(self, path: str, every_seconds: float = 5.0):
+        self.path = Path(path)
+        self.every = every_seconds
+        self.last = 0.0
+
+    def beat(self) -> None:
+        now = time.monotonic()
+        if now - self.last < self.every:
+            return
+        self.last = now
+        try:
+            self.path.touch()
+        except OSError:
+            log.warning("не удалось обновить файл-пульс", extra={"path": str(self.path)})
+
+
 def housekeeping() -> None:
     with SessionLocal() as db:
         # «Зависшие» этапы упавшего воркера возвращаются в очередь
@@ -144,6 +164,7 @@ def run() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
     log.info("воркер запущен", extra={"worker_id": settings.worker_id})
+    heartbeat = Heartbeat(settings.worker_heartbeat_file)
     last_housekeeping = 0.0
     while not _stop:
         if time.monotonic() - last_housekeeping > 30:
@@ -159,6 +180,7 @@ def run() -> None:
             log.exception("не удалось получить задачу из очереди")
             time.sleep(2)
             continue
+        heartbeat.beat()
         if job_id is None:
             time.sleep(settings.worker_poll_interval_seconds)
             continue
