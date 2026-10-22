@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ORMModel(BaseModel):
@@ -16,9 +16,17 @@ class ORMModel(BaseModel):
 # --------------------------------------------------------------------------- auth
 
 
+# Ограничения длины и диапазонов совпадают с колонками БД: некорректный ввод получает 422, а не 500
+MAX_AMOUNT = 10_000_000_000  # 10 млрд ₽ — заведомо больше любого продукта
+MAX_REVENUE = 1_000_000_000_000
+Money = Annotated[float, Field(gt=0, le=MAX_AMOUNT, allow_inf_nan=False)]
+Term = Annotated[int, Field(gt=0, le=120)]
+Code = Annotated[str, Field(min_length=1, max_length=32)]
+
+
 class LoginIn(BaseModel):
-    login: str = Field(examples=["+79000000001"])
-    password: str = Field(examples=["demo1234"])
+    login: str = Field(max_length=64, examples=["smirnov"])
+    password: str = Field(max_length=128, examples=["demo1234"])
 
 
 class UserOut(ORMModel):
@@ -118,9 +126,9 @@ class CompanyProfileOut(BaseModel):
 
 class MatchIn(BaseModel):
     company_id: uuid.UUID
-    purpose: str
-    amount: float = Field(gt=0)
-    term_months: int = Field(gt=0, le=120)
+    purpose: Code
+    amount: Money
+    term_months: Term
 
 
 class MatchOut(BaseModel):
@@ -133,26 +141,48 @@ class MatchOut(BaseModel):
 
 class ApplicationCreate(BaseModel):
     company_id: uuid.UUID
-    product_code: str
-    amount: float = Field(gt=0)
-    term_months: int = Field(gt=0, le=120)
-    purpose: str
-    purpose_details: str | None = None
+    product_code: Code
+    amount: Money
+    term_months: Term
+    purpose: Code
+    purpose_details: str | None = Field(default=None, max_length=2000)
     parent_id: uuid.UUID | None = None
 
 
+# Поля, которые нельзя очистить: в БД они NOT NULL
+REQUIRED_DRAFT_FIELDS = {
+    "product_code": "продукт",
+    "amount": "сумма",
+    "term_months": "срок",
+    "purpose": "цель",
+    "has_collateral": "залог",
+    "owner_guarantee": "поручительство",
+}
+
+
 class ApplicationUpdate(BaseModel):
-    product_code: str | None = None
-    amount: float | None = Field(default=None, gt=0)
-    term_months: int | None = Field(default=None, gt=0, le=120)
-    purpose: str | None = None
-    purpose_details: str | None = None
-    declared_revenue: float | None = Field(default=None, ge=0)
+    product_code: Code | None = None
+    amount: Money | None = None
+    term_months: Term | None = None
+    purpose: Code | None = None
+    purpose_details: str | None = Field(default=None, max_length=2000)
+    declared_revenue: float | None = Field(default=None, ge=0, le=MAX_REVENUE, allow_inf_nan=False)
     has_collateral: bool | None = None
-    collateral_description: str | None = None
+    collateral_description: str | None = Field(default=None, max_length=400)
     owner_guarantee: bool | None = None
-    contact_name: str | None = None
-    contact_phone: str | None = None
+    contact_name: str | None = Field(default=None, max_length=200)
+    contact_phone: str | None = Field(default=None, max_length=32)
+
+    @model_validator(mode="after")
+    def no_null_for_required(self) -> ApplicationUpdate:
+        cleared = [
+            label
+            for name, label in REQUIRED_DRAFT_FIELDS.items()
+            if name in self.model_fields_set and getattr(self, name) is None
+        ]
+        if cleared:
+            raise ValueError("нельзя оставить пустым: " + ", ".join(cleared))
+        return self
 
 
 class DocumentOut(ORMModel):
@@ -286,7 +316,7 @@ class SignConfirmIn(BaseModel):
 
 
 class InfoResponseIn(BaseModel):
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=4000)
     fields: ApplicationUpdate | None = None
 
 
@@ -352,26 +382,26 @@ class BankApplicationRow(BaseModel):
 
 
 class BankOfferIn(BaseModel):
-    product_code: str
-    amount: float = Field(gt=0)
-    term_months: int = Field(gt=0, le=120)
-    rate: float | None = Field(default=None, gt=0, lt=100)
-    label: str | None = None
+    product_code: Code
+    amount: Money
+    term_months: Term
+    rate: float | None = Field(default=None, gt=0, lt=100, allow_inf_nan=False)
+    label: str | None = Field(default=None, max_length=120)
 
 
 class BankInfoItemIn(BaseModel):
     type: Literal["DOCUMENT", "COMMENT"]
-    doc_type: str | None = None
-    label: str
+    doc_type: Code | None = None
+    label: str = Field(min_length=1, max_length=300)
 
 
 class BankDecisionIn(BaseModel):
     action: Literal["APPROVE", "REQUEST_INFO", "DECLINE"]
-    offers: list[BankOfferIn] = []
-    info_items: list[BankInfoItemIn] = []
-    reason: str | None = None
-    message_to_client: str | None = None
-    comment_internal: str | None = None
+    offers: list[BankOfferIn] = Field(default=[], max_length=3)
+    info_items: list[BankInfoItemIn] = Field(default=[], max_length=10)
+    reason: str | None = Field(default=None, max_length=500)
+    message_to_client: str | None = Field(default=None, max_length=4000)
+    comment_internal: str | None = Field(default=None, max_length=4000)
 
 
 class SettingOut(BaseModel):

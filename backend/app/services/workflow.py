@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -47,6 +48,20 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def local_now() -> datetime:
+    """Текущее время в часовом поясе клиентов (по умолчанию Москва): даты графиков и договоров."""
+    return datetime.now(ZoneInfo(settings.display_timezone))
+
+
+def local_today() -> date:
+    return local_now().date()
+
+
+def clip(text_value: str, limit: int) -> str:
+    """Обрезает текст под размер колонки, чтобы длинное сообщение не превращалось в ошибку 500."""
+    return text_value if len(text_value) <= limit else text_value[: limit - 1].rstrip() + "…"
+
+
 def get_setting(db: Session, key: str) -> Any:
     row = db.get(Setting, key)
     if row is None:
@@ -76,10 +91,12 @@ def add_event(
     from_status: str | None = None,
     to_status: str | None = None,
 ) -> ApplicationEvent:
+    if len(title) > 300:
+        payload = {**(payload or {}), "full_title": title}
     ev = ApplicationEvent(
         application_id=app.id,
         event_type=event_type,
-        title=title,
+        title=clip(title, 300),
         actor_type=actor_type,
         actor_id=actor_id,
         payload=payload or {},
@@ -96,7 +113,9 @@ def notify_company(db: Session, app: Application, title: str, body: str, *, sign
     if signers_only:
         q = q.where(CompanyMember.can_sign.is_(True))
     for member in db.scalars(q):
-        db.add(Notification(user_id=member.user_id, application_id=app.id, title=title, body=body))
+        db.add(
+            Notification(user_id=member.user_id, application_id=app.id, title=clip(title, 200), body=clip(body, 500))
+        )
 
 
 def transition(

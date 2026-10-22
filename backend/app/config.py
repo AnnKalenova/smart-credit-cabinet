@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     pipeline_stage_delay_seconds: float = 1.2  # пауза между этапами, чтобы в демо было видно движение
     worker_poll_interval_seconds: float = 0.5
     worker_id: str = "worker-1"
+    # файл-пульс воркера: его свежесть проверяет healthcheck контейнера
+    worker_heartbeat_file: str = "/tmp/worker-heartbeat"
 
     synthetic_data_path: str = "../data/synthetic/companies.json"
     upload_dir: str = "/data/uploads"
@@ -42,13 +44,7 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
     log_level: str = "INFO"
-
-    # Необязательный ИИ-помощник: любой OpenAI-совместимый провайдер с моделью с открытыми весами
-    llm_enabled: bool = False
-    llm_base_url: str = ""
-    llm_api_key: str = ""
-    llm_model: str = ""
-    llm_timeout_seconds: float = 30.0
+    display_timezone: str = "Europe/Moscow"  # часовой пояс для дат в текстах для клиента
 
 
 @lru_cache

@@ -9,3 +9,4 @@ pyjwt
 httpx
 python-multipart
 prometheus-client
+tzdata  # часовые пояса для zoneinfo независимо от образа ОС
