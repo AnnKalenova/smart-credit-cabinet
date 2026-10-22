@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Application, MatchResult } from "../../api/types";
@@ -10,6 +10,7 @@ import { useToast } from "../../lib/toast";
 
 const TERMS = [3, 6, 9, 12, 18, 24, 36, 48, 60, 84];
 const PRESETS = [500_000, 1_000_000, 3_000_000, 5_000_000, 10_000_000, 25_000_000];
+const MAX_AMOUNT = 10_000_000_000;
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -38,9 +39,11 @@ export function MatchPage() {
         method: "POST",
         json: { company_id: company!.id, purpose: query.purpose, amount: query.amount, term_months: query.term },
       }),
-    enabled: Boolean(company && query.purpose && query.amount > 0),
+    enabled: Boolean(company && query.purpose && query.amount > 0 && query.amount <= MAX_AMOUNT),
   });
 
+  // защита от двойного нажатия: второй черновик не создаётся, пока первый запрос не завершился
+  const creating = useRef(false);
   const create = useMutation({
     mutationFn: (r: MatchResult) =>
       api<Application>("/api/v1/applications", {
@@ -48,8 +51,16 @@ export function MatchPage() {
         json: { company_id: company!.id, product_code: r.product_code, amount: r.amount, term_months: r.term_months, purpose },
       }),
     onSuccess: (app) => nav(`/c/applications/${app.id}`),
-    onError: (e) => toast.error(e),
+    onError: (e) => {
+      creating.current = false;
+      toast.error(e);
+    },
   });
+  const startDraft = (r: MatchResult) => {
+    if (creating.current) return;
+    creating.current = true;
+    create.mutate(r);
+  };
 
   return (
     <>
@@ -88,6 +99,7 @@ export function MatchPage() {
                   id="amount"
                   className="input input-money"
                   inputMode="numeric"
+                  maxLength={17}
                   value={amountText}
                   placeholder="1 000 000"
                   onChange={(e) => setAmountText(formatInputAmount(e.target.value))}
@@ -174,7 +186,7 @@ export function MatchPage() {
                     {money(r.amount)} на {r.term_months} мес.
                   </div>
                 </div>
-                <button className={`btn ${r.recommended ? "btn-primary" : "btn-ghost"}`} disabled={create.isPending} onClick={() => create.mutate(r)}>
+                <button className={`btn ${r.recommended ? "btn-primary" : "btn-ghost"}`} disabled={create.isPending} onClick={() => startDraft(r)}>
                   Оформить
                 </button>
               </article>

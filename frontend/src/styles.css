@@ -244,6 +244,16 @@ textarea {
   color: rgba(255, 255, 255, 0.6);
   font-size: var(--fs-xs);
 }
+.topbar .company-select {
+  height: 36px;
+  width: 220px;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-color: transparent;
+}
+.topbar .company-select option {
+  color: #000;
+}
 .demo-strip {
   background: var(--signal);
   color: var(--ink);
@@ -899,7 +909,7 @@ hr.rule {
 
 .kv {
   display: grid;
-  grid-template-columns: minmax(96px, max-content) 1fr;
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
   gap: 8px 16px;
   font-size: var(--fs-s);
 }
@@ -908,11 +918,12 @@ hr.rule {
 }
 .kv dd {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .list-app {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 16px;
   padding: 14px 4px;
   border-bottom: 1px solid var(--rule);
@@ -1497,10 +1508,14 @@ hr.rule {
 
 @media (max-width: 1040px) {
   .grid-2 {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .option {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .option > :first-child,
+  .option > .btn {
+    grid-column: 1 / -1;
   }
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1520,15 +1535,73 @@ hr.rule {
   .page {
     padding: 20px 16px 48px;
   }
+  /* шапка в две строки: бренд и действия, ниже — разделы с горизонтальной прокруткой */
   .topbar-inner {
-    padding: 0 16px;
-    gap: 12px;
+    padding: 8px 16px 6px;
+    gap: 4px 12px;
+    height: auto;
+    flex-wrap: wrap;
+  }
+  .brand small {
+    display: none;
   }
   .topnav {
-    display: none;
+    order: 3;
+    flex: 1 0 100%;
+    overflow-x: auto;
+    margin: 0 -4px;
+  }
+  .topnav a {
+    white-space: nowrap;
+  }
+  .topbar-right {
+    gap: 2px;
+  }
+  .topbar .company-select {
+    width: 140px;
+  }
+  .user-chip {
+    padding: 0;
+    background: transparent;
   }
   .user-chip .who {
     display: none;
+  }
+  .list-app {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .list-app > .stack-s {
+    align-items: flex-start !important;
+  }
+  .option {
+    padding: 16px;
+    gap: 12px;
+  }
+  .option .val {
+    font-size: var(--fs-m);
+  }
+  .kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .funnel-row {
+    grid-template-columns: 110px minmax(0, 1fr) 40px;
+  }
+  .kv {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px 0;
+  }
+  .kv dd + dt {
+    margin-top: 8px;
+  }
+  .tabs {
+    margin-left: -4px;
+    margin-right: -4px;
+  }
+  /* 16 px в полях ввода: iOS не увеличивает страницу при фокусе */
+  .input,
+  .select,
+  .textarea {
+    font-size: 16px;
   }
   .form-grid {
     grid-template-columns: 1fr;
@@ -1537,16 +1610,38 @@ hr.rule {
     grid-column: auto;
   }
   .ticket-body {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 16px;
+  }
+  .ticket-head,
+  .ticket-foot {
+    padding-left: 16px;
+    padding-right: 16px;
   }
   .now-panel {
     grid-template-columns: 1fr;
   }
   .station span.label {
-    font-size: 11px;
+    font-size: 10px;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  .station {
+    gap: 8px;
+  }
+  .conveyor {
+    padding: 18px 16px 20px;
+  }
+  .conveyor-top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .conveyor .amount {
+    font-size: var(--fs-xl);
   }
   .factor-row {
-    grid-template-columns: 1fr 70px;
+    grid-template-columns: minmax(0, 1fr) 56px;
   }
   .factor-row .factor-bar,
   .factor-row .val {
@@ -1555,6 +1650,19 @@ hr.rule {
   .page-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  /* на узком экране подписан только текущий шаг: остальные видны по отметкам на линии */
+  .station span.label {
+    visibility: hidden;
+  }
+  .station.current span.label,
+  .station.failed span.label {
+    visibility: visible;
+    white-space: nowrap;
+    font-size: 11px;
   }
 }
 

@@ -16,6 +16,8 @@ export function useRefreshApp(appId: string) {
   };
 }
 
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
 function UploadButtons({ app, docType, editable }: { app: Application; docType: string; editable: boolean }) {
   const toast = useToast();
   const refresh = useRefreshApp(app.id);
@@ -24,6 +26,16 @@ function UploadButtons({ app, docType, editable }: { app: Application; docType: 
   if (!editable) return null;
 
   const upload = async (file: File) => {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      toast.error(`Файл «${file.name}» больше 10 МБ — уменьшите его или сохраните в PDF`);
+      if (input.current) input.current.value = "";
+      return;
+    }
+    if (file.size === 0) {
+      toast.error(`Файл «${file.name}» пустой`);
+      if (input.current) input.current.value = "";
+      return;
+    }
     setBusy(true);
     try {
       const fd = new FormData();
@@ -100,8 +112,19 @@ function DocRow({ app, doc, editable }: { app: Application; doc: DocumentInfo; e
   );
 }
 
-/** Обязательные документы (по правилам продукта) + любые дополнительные. */
-export function DocumentsBlock({ app, editable, extraTypes = [] }: { app: Application; editable: boolean; extraTypes?: string[] }) {
+/** Обязательные документы (по правилам продукта) + любые дополнительные.
+ *  newSince — дата запроса банка: запрошенный документ засчитывается, только если он приложен после запроса. */
+export function DocumentsBlock({
+  app,
+  editable,
+  extraTypes = [],
+  newSince,
+}: {
+  app: Application;
+  editable: boolean;
+  extraTypes?: string[];
+  newSince?: string;
+}) {
   const { dict } = useAuth();
   const required = app.required_documents;
   const requiredTypes = new Set([...required.map((r) => r.doc_type), ...extraTypes]);
@@ -113,14 +136,21 @@ export function DocumentsBlock({ app, editable, extraTypes = [] }: { app: Applic
       {types.length === 0 && <p className="small muted">Для этой заявки документы не нужны — банк оценит бизнес по оборотам на счёте.</p>}
       {types.map((r) => {
         const docs = app.documents.filter((d) => d.doc_type === r.doc_type);
+        const requested = newSince !== undefined && extraTypes.includes(r.doc_type);
+        const fresh = requested ? docs.filter((d) => Date.parse(d.uploaded_at) >= Date.parse(newSince)) : docs;
         return (
           <div key={r.doc_type} className="panel-flat" style={{ padding: "12px 14px" }}>
-            <div className="row">
-              {docs.length ? <CircleCheck size={18} className="pos" /> : <span style={{ width: 18 }} />}
+            <div className="row-wrap">
+              {fresh.length ? <CircleCheck size={18} className="pos" /> : <span style={{ width: 18 }} />}
               <b className="small">{r.label}</b>
               <span className="spacer" />
               <UploadButtons app={app} docType={r.doc_type} editable={editable} />
             </div>
+            {requested && docs.length > 0 && fresh.length === 0 && (
+              <p className="xs muted" style={{ margin: "6px 0 0 26px" }}>
+                Банк запросил этот документ после проверки — приложите актуальную версию.
+              </p>
+            )}
             {docs.map((d) => (
               <DocRow key={d.id} app={app} doc={d} editable={editable} />
             ))}

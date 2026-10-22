@@ -86,7 +86,7 @@ export function LoginPage() {
         <form className="stack" onSubmit={onSubmit} style={{ maxWidth: 420 }}>
           <div className="field">
             <label htmlFor="login">Логин</label>
-            <input id="login" className="input" value={form.login} onChange={(e) => setForm({ ...form, login: e.target.value })} autoComplete="username" />
+            <input id="login" className="input" maxLength={64} value={form.login} onChange={(e) => setForm({ ...form, login: e.target.value })} autoComplete="username" />
           </div>
           <div className="field">
             <label htmlFor="password">Пароль</label>
@@ -94,6 +94,7 @@ export function LoginPage() {
               id="password"
               type="password"
               className="input"
+              maxLength={128}
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               autoComplete="current-password"

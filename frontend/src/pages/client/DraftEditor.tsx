@@ -40,6 +40,8 @@ function toDraft(a: Application): Draft {
   };
 }
 
+const MAX_AMOUNT = 10_000_000_000;
+
 function termOptions(p: Product): number[] {
   const nice = [3, 6, 9, 12, 18, 24, 30, 36, 48, 60, 72, 84];
   const list = nice.filter((t) => t >= p.min_term && t <= p.max_term);
@@ -87,9 +89,16 @@ export function DraftEditor({ app }: { app: Application }) {
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K], immediate = false) => {
     setD((prev) => ({ ...prev, [key]: value }));
-    let apiValue: unknown = value;
-    if (key === "amount" || key === "declared_revenue") apiValue = parseAmount(String(value)) || null;
-    dirty.current[key] = apiValue;
+    if (key === "amount") {
+      // сумма обязательна: пустое или нулевое значение не сохраняем, пока клиент не введёт число
+      const n = parseAmount(String(value));
+      if (n > 0 && n <= MAX_AMOUNT) dirty.current.amount = n;
+      else delete dirty.current.amount;
+    } else if (key === "declared_revenue") {
+      dirty.current.declared_revenue = parseAmount(String(value)) || null;
+    } else {
+      dirty.current[key] = value;
+    }
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(flush, immediate ? 0 : 700);
   };
@@ -175,10 +184,16 @@ export function DraftEditor({ app }: { app: Application }) {
           <Field
             label="Сумма"
             hint={`От ${money(product.min_amount)} до ${money(product.max_amount)}`}
-            error={amount && (amount < product.min_amount || amount > product.max_amount) ? `Сумма должна быть от ${money(product.min_amount)} до ${money(product.max_amount)}` : undefined}
+            error={
+              !amount
+                ? "Укажите сумму"
+                : amount < product.min_amount || amount > product.max_amount
+                  ? `Сумма должна быть от ${money(product.min_amount)} до ${money(product.max_amount)}`
+                  : undefined
+            }
           >
             <div className="input-group">
-              <input className="input input-money" inputMode="numeric" value={d.amount} onChange={(e) => set("amount", formatInputAmount(e.target.value))} />
+              <input className="input input-money" inputMode="numeric" maxLength={17} value={d.amount} onChange={(e) => set("amount", formatInputAmount(e.target.value))} />
               <span className="suffix">₽</span>
             </div>
           </Field>
@@ -195,6 +210,7 @@ export function DraftEditor({ app }: { app: Application }) {
             <Field label="Коротко о задаче" hint="Поможет специалисту, если заявка попадёт на ручное рассмотрение">
               <textarea
                 className="textarea"
+                maxLength={2000}
                 value={d.purpose_details}
                 placeholder="Например: закупка сырья под заказ сети магазинов"
                 onChange={(e) => set("purpose_details", e.target.value)}
@@ -232,16 +248,22 @@ export function DraftEditor({ app }: { app: Application }) {
             hint={p ? `Мы подставили оценку по поступлениям на ваш счёт. Если часть выручки идёт в другой банк — укажите всю.` : undefined}
           >
             <div className="input-group">
-              <input className="input input-money" inputMode="numeric" value={d.declared_revenue} onChange={(e) => set("declared_revenue", formatInputAmount(e.target.value))} />
+              <input
+                className="input input-money"
+                inputMode="numeric"
+                maxLength={19}
+                value={d.declared_revenue}
+                onChange={(e) => set("declared_revenue", formatInputAmount(e.target.value))}
+              />
               <span className="suffix">₽</span>
             </div>
           </Field>
           <div />
           <Field label="Контактное лицо">
-            <input className="input" value={d.contact_name} onChange={(e) => set("contact_name", e.target.value)} />
+            <input className="input" maxLength={200} value={d.contact_name} onChange={(e) => set("contact_name", e.target.value)} />
           </Field>
           <Field label="Телефон для связи" hint="Только для уточнений — весь процесс идёт в кабинете">
-            <input className="input" value={d.contact_phone} onChange={(e) => set("contact_phone", e.target.value)} />
+            <input className="input" type="tel" inputMode="tel" maxLength={32} value={d.contact_phone} onChange={(e) => set("contact_phone", e.target.value)} />
           </Field>
         </div>
       </section>
@@ -263,7 +285,7 @@ export function DraftEditor({ app }: { app: Application }) {
             )}
             {(product.collateral === "REQUIRED" || d.has_collateral) && (
               <Field label="Что будет в залоге" hint="Что это, у кого покупаете, примерная стоимость">
-                <textarea className="textarea" value={d.collateral_description} onChange={(e) => set("collateral_description", e.target.value)} />
+                <textarea className="textarea" maxLength={400} value={d.collateral_description} onChange={(e) => set("collateral_description", e.target.value)} />
               </Field>
             )}
             <label className="check">

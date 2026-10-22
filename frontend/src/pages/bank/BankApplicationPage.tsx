@@ -139,14 +139,14 @@ function DecisionForm({ app }: { app: BankApplication }) {
                     ))}
                   </select>
                   <Field label="Сумма, ₽">
-                    <input className="input input-money" value={o.amount} onChange={(e) => updateOffer(i, { amount: formatInputAmount(e.target.value) })} />
+                    <input className="input input-money" maxLength={17} value={o.amount} onChange={(e) => updateOffer(i, { amount: formatInputAmount(e.target.value) })} />
                   </Field>
                   <div className="row">
                     <Field label="Срок, мес.">
                       <input className="input" type="number" value={o.term_months} onChange={(e) => updateOffer(i, { term_months: Number(e.target.value) })} />
                     </Field>
                     <Field label="Ставка, %">
-                      <input className="input" value={o.rate} onChange={(e) => updateOffer(i, { rate: e.target.value })} />
+                      <input className="input" inputMode="decimal" maxLength={6} value={o.rate} onChange={(e) => updateOffer(i, { rate: e.target.value })} />
                     </Field>
                   </div>
                   {hint && (
@@ -179,10 +179,10 @@ function DecisionForm({ app }: { app: BankApplication }) {
                 ))}
             </div>
             <Field label="Другой документ">
-              <input className="input" value={customItem} placeholder="Например, справка об отсутствии налогового долга" onChange={(e) => setCustomItem(e.target.value)} />
+              <input className="input" maxLength={300} value={customItem} placeholder="Например, справка об отсутствии налогового долга" onChange={(e) => setCustomItem(e.target.value)} />
             </Field>
             <Field label="Вопрос клиенту">
-              <input className="input" value={question} placeholder="Например, расскажите о причинах смены руководителя" onChange={(e) => setQuestion(e.target.value)} />
+              <input className="input" maxLength={300} value={question} placeholder="Например, расскажите о причинах смены руководителя" onChange={(e) => setQuestion(e.target.value)} />
             </Field>
           </>
         )}
@@ -196,10 +196,10 @@ function DecisionForm({ app }: { app: BankApplication }) {
           </Field>
         )}
         <Field label="Сообщение клиенту" hint="Клиент увидит его в заявке и в переписке">
-          <textarea className="textarea" style={{ minHeight: 70 }} value={message} onChange={(e) => setMessage(e.target.value)} />
+          <textarea className="textarea" style={{ minHeight: 70 }} maxLength={4000} value={message} onChange={(e) => setMessage(e.target.value)} />
         </Field>
         <Field label="Комментарий для банка" hint="Виден только сотрудникам, сохраняется в журнале решения">
-          <textarea className="textarea" style={{ minHeight: 60 }} value={comment} onChange={(e) => setComment(e.target.value)} />
+          <textarea className="textarea" style={{ minHeight: 60 }} maxLength={4000} value={comment} onChange={(e) => setComment(e.target.value)} />
         </Field>
         <button
           className={`btn ${action === "DECLINE" ? "btn-danger" : "btn-primary"}`}
@@ -607,7 +607,7 @@ function DocsAndChat({ app }: { app: BankApplication }) {
           ))}
         </div>
         <div className="row" style={{ marginTop: 12 }}>
-          <input className="input" placeholder="Сообщение клиенту" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && text.trim() && send.mutate()} />
+          <input className="input" placeholder="Сообщение клиенту" maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && text.trim() && send.mutate()} />
           <button className="btn btn-primary" disabled={!text.trim()} onClick={() => send.mutate()} aria-label="Отправить">
             <Send size={17} />
           </button>

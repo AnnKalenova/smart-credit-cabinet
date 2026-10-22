@@ -277,6 +277,7 @@ export interface Application extends ApplicationSummary {
     can_cancel: boolean;
     can_answer: boolean;
     can_accept: boolean;
+    can_request_signature: boolean;
     can_reapply: boolean;
     signers: string[];
     position_label: string;

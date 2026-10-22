@@ -114,15 +114,9 @@ export function Layout({ children, area }: { children: ReactNode; area: "client"
           </nav>
           <div className="topbar-right">
             {isClient && me.companies.length > 1 && (
-              <select
-                className="select"
-                style={{ height: 36, width: 220, background: "rgba(255,255,255,0.08)", color: "#fff", borderColor: "transparent" }}
-                value={company?.id}
-                onChange={(e) => setCompanyId(e.target.value)}
-                aria-label="Компания"
-              >
+              <select className="select company-select" value={company?.id} onChange={(e) => setCompanyId(e.target.value)} aria-label="Компания">
                 {me.companies.map((c) => (
-                  <option key={c.id} value={c.id} style={{ color: "#000" }}>
+                  <option key={c.id} value={c.id}>
                     {c.short_name}
                   </option>
                 ))}

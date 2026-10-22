@@ -70,7 +70,7 @@ function ReviewPanel({ app }: { app: Application }) {
         <div className="stack-s">
           <h2>Заявку изучает кредитный специалист</h2>
           <p className="muted">
-            Автоматическая проверка пройдена, но для такой заявки решение принимает человек — например, из-за суммы или особенностей бизнеса.
+            По этой заявке решение принимает кредитный специалист банка — например, из-за суммы или особенностей бизнеса.
             {app.review_due_at && ` Ориентировочный срок решения — ${dateTime(app.review_due_at)} (${due.text}).`}
           </p>
           <p className="small muted">Если специалисту понадобятся документы, запрос появится здесь, а уведомление — в колокольчике. Написать специалисту можно в переписке справа.</p>
@@ -124,11 +124,12 @@ function InfoRequestPanel({ app }: { app: Application }) {
             {i.why && <div className="muted">{i.why}</div>}
           </div>
         ))}
-        {docTypes.length > 0 && <DocumentsBlock app={app} editable extraTypes={docTypes} />}
+        {docTypes.length > 0 && <DocumentsBlock app={app} editable extraTypes={docTypes} newSince={req.created_at} />}
         {fieldItems.map((i) => (
           <Field key={i.code} label={i.label}>
             <input
               className="input"
+              maxLength={200}
               value={fields[i.field ?? i.code] ?? ""}
               onChange={(e) => {
                 const key = i.field ?? i.code;
@@ -138,11 +139,9 @@ function InfoRequestPanel({ app }: { app: Application }) {
             />
           </Field>
         ))}
-        {(commentItems.length > 0 || true) && (
-          <Field label={commentItems[0]?.label ?? "Комментарий для банка (необязательно)"}>
-            <textarea className="textarea" value={comment} onChange={(e) => setComment(e.target.value)} />
-          </Field>
-        )}
+        <Field label={commentItems[0]?.label ?? "Комментарий для банка (необязательно)"}>
+          <textarea className="textarea" maxLength={4000} value={comment} onChange={(e) => setComment(e.target.value)} />
+        </Field>
         <ProblemList problems={problems} />
         <div>
           <button className="btn btn-signal" disabled={busy} onClick={send}>
@@ -220,6 +219,7 @@ function Messages({ app }: { app: Application }) {
         <input
           className="input"
           placeholder="Сообщение специалисту"
+          maxLength={4000}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && text.trim() && send.mutate()}
@@ -269,6 +269,7 @@ export function ApplicationPage() {
   const { id } = useParams<{ id: string }>();
   const toast = useToast();
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const q = useQuery({
     queryKey: ["application", id],
     queryFn: () => api<Application>(`/api/v1/applications/${id}`),
@@ -296,12 +297,15 @@ export function ApplicationPage() {
   const s = app.status;
 
   const cancel = async () => {
+    setCancelling(true);
     try {
       await api(`/api/v1/applications/${app.id}/cancel`, { method: "POST" });
       setConfirmCancel(false);
       refresh();
     } catch (e) {
       toast.error(e);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -354,7 +358,7 @@ export function ApplicationPage() {
           {s === "DRAFT" && app.permissions.can_cancel && (
             <div>
               <button className="btn-link small" style={{ color: "var(--ink-2)" }} onClick={() => setConfirmCancel(true)}>
-                Удалить черновик
+                Отменить черновик
               </button>
             </div>
           )}
@@ -362,20 +366,24 @@ export function ApplicationPage() {
       </div>
       {confirmCancel && (
         <Modal
-          title={s === "DRAFT" ? "Удалить черновик?" : "Отозвать заявку?"}
+          title={s === "DRAFT" ? "Отменить черновик?" : "Отозвать заявку?"}
           onClose={() => setConfirmCancel(false)}
           footer={
             <>
               <button className="btn btn-ghost" onClick={() => setConfirmCancel(false)}>
                 Оставить
               </button>
-              <button className="btn btn-danger" onClick={cancel}>
-                {s === "DRAFT" ? "Удалить" : "Отозвать"}
+              <button className="btn btn-danger" disabled={cancelling} onClick={cancel}>
+                {s === "DRAFT" ? "Отменить черновик" : "Отозвать заявку"}
               </button>
             </>
           }
         >
-          <p>Банк прекратит рассмотрение. Позже можно подать новую заявку — данные заполнятся автоматически.</p>
+          <p>
+            {s === "DRAFT"
+              ? "Черновик закроется — в банк он не отправлялся. Позже можно подать новую заявку с этими данными."
+              : "Банк прекратит рассмотрение. Позже можно подать новую заявку — данные заполнятся автоматически."}
+          </p>
         </Modal>
       )}
     </>

@@ -49,7 +49,7 @@ export function BankQueue() {
           <p className="muted">Большую часть заявок конвейер решает сам. Сюда попадают те, где нужна экспертиза специалиста.</p>
         </div>
         <div className="input-group" style={{ width: 300 }}>
-          <input className="input" placeholder="Номер, компания или ИНН" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Поиск" />
+          <input className="input" placeholder="Номер, компания или ИНН" maxLength={100} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Поиск" />
           <span className="suffix">
             <Search size={16} />
           </span>

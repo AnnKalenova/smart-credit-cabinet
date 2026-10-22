@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { BadgeCheck, CircleMinus, CirclePlus, FileSignature, FileText, Info, PartyPopper, Undo2 } from "lucide-react";
+import { BadgeCheck, CircleMinus, CirclePlus, FileSignature, FileText, Info, PartyPopper, Undo2, UserRoundCheck } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../../api/client";
+import { ApiError, api } from "../../api/client";
 import type { Application, Contract, Offer, ScheduleRow } from "../../api/types";
 import { SignDialog } from "../../components/SignDialog";
 import { Modal } from "../../components/ui";
@@ -185,17 +185,16 @@ export function DecisionExplain({ app }: { app: Application }) {
   );
 }
 
-export function OfferChoice({ app }: { app: Application }) {
+/** Подсказка для сотрудника без права подписи: кто может принять решение, и кнопка уведомить его. */
+function AskSigner({ app, what }: { app: Application; what: string }) {
   const toast = useToast();
   const refresh = useRefreshApp(app.id);
   const [busy, setBusy] = useState(false);
-  const [confirmDecline, setConfirmDecline] = useState(false);
-
-  const accept = async (offer: Offer) => {
+  const ask = async () => {
     setBusy(true);
     try {
-      await api(`/api/v1/applications/${app.id}/offers/${offer.id}/accept`, { method: "POST" });
-      toast.ok("Предложение принято — осталось подписать договор");
+      await api(`/api/v1/applications/${app.id}/request-signature`, { method: "POST" });
+      toast.ok(`Уведомили: ${app.permissions.signers.join(", ")}`);
       refresh();
     } catch (e) {
       toast.error(e);
@@ -203,13 +202,52 @@ export function OfferChoice({ app }: { app: Application }) {
       setBusy(false);
     }
   };
+  return (
+    <div className="callout warn">
+      <UserRoundCheck size={18} />
+      <div className="stack-s">
+        <span>
+          {what} может: {app.permissions.signers.join(", ")}.
+        </span>
+        <div>
+          <button className="btn btn-primary btn-s" disabled={busy} onClick={ask}>
+            Передать на подпись
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function OfferChoice({ app }: { app: Application }) {
+  const toast = useToast();
+  const refresh = useRefreshApp(app.id);
+  const [busy, setBusy] = useState(false);
+  const [confirmDecline, setConfirmDecline] = useState(false);
+
+  const accept = async (offer: Offer) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api(`/api/v1/applications/${app.id}/offers/${offer.id}/accept`, { method: "POST" });
+      toast.ok("Предложение принято — осталось подписать договор");
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
   const decline = async () => {
+    setBusy(true);
     try {
       await api(`/api/v1/applications/${app.id}/offers/decline`, { method: "POST" });
       setConfirmDecline(false);
-      refresh();
     } catch (e) {
       toast.error(e);
+    } finally {
+      setBusy(false);
+      refresh();
     }
   };
 
@@ -219,6 +257,9 @@ export function OfferChoice({ app }: { app: Application }) {
       <div className="row">
         <h2>{app.offers.length > 1 ? "Выберите вариант" : "Предложение банка"}</h2>
       </div>
+      {!app.permissions.can_accept && app.permissions.can_request_signature && (
+        <AskSigner app={app} what="Выбрать вариант и подписать кредитный договор" />
+      )}
       {app.offers.map((o, i) => (
         <OfferTicket
           key={o.id}
@@ -233,11 +274,13 @@ export function OfferChoice({ app }: { app: Application }) {
           }
         />
       ))}
-      <div>
-        <button className="btn-link small" style={{ color: "var(--ink-2)" }} onClick={() => setConfirmDecline(true)}>
-          Отказаться от предложения
-        </button>
-      </div>
+      {app.permissions.can_accept && (
+        <div>
+          <button className="btn-link small" style={{ color: "var(--ink-2)" }} onClick={() => setConfirmDecline(true)}>
+            Отказаться от предложения
+          </button>
+        </div>
+      )}
       {confirmDecline && (
         <Modal
           title="Отказаться от предложения?"
@@ -247,7 +290,7 @@ export function OfferChoice({ app }: { app: Application }) {
               <button className="btn btn-ghost" onClick={() => setConfirmDecline(false)}>
                 Оставить
               </button>
-              <button className="btn btn-danger" onClick={decline}>
+              <button className="btn btn-danger" disabled={busy} onClick={decline}>
                 Отказаться
               </button>
             </>
@@ -269,24 +312,23 @@ export function SigningPanel({ app }: { app: Application }) {
   const offer = app.offers[0];
 
   const sign = async (challengeId: string, code: string) => {
-    await api(`/api/v1/applications/${app.id}/sign`, { method: "POST", json: { challenge_id: challengeId, code } });
+    try {
+      await api(`/api/v1/applications/${app.id}/sign`, { method: "POST", json: { challenge_id: challengeId, code } });
+    } catch (e) {
+      // 409 — предложение истекло или заявка изменилась: показываем актуальный статус
+      if (e instanceof ApiError && e.status === 409) refresh();
+      throw e;
+    }
     toast.ok("Договор подписан — перечисляем деньги");
     refresh();
   };
   const back = async () => {
     try {
       await api(`/api/v1/applications/${app.id}/signing/back`, { method: "POST" });
+    } catch (e) {
+      toast.error(e);
+    } finally {
       refresh();
-    } catch (e) {
-      toast.error(e);
-    }
-  };
-  const askSigner = async () => {
-    try {
-      await api(`/api/v1/applications/${app.id}/request-signature`, { method: "POST" });
-      toast.ok(`Уведомили: ${app.permissions.signers.join(", ")}`);
-    } catch (e) {
-      toast.error(e);
     }
   };
 
@@ -306,21 +348,20 @@ export function SigningPanel({ app }: { app: Application }) {
             <button className="btn btn-ghost" onClick={() => setPreview(true)} disabled={!contract.data}>
               Посмотреть договор и график
             </button>
-            {app.permissions.can_sign ? (
+            {app.permissions.can_sign && (
               <button className="btn btn-signal" onClick={() => setSigning(true)}>
                 <FileSignature size={18} /> Подписать кодом
               </button>
-            ) : (
-              <button className="btn btn-primary" onClick={askSigner}>
-                Передать на подпись: {app.permissions.signers.join(", ")}
-              </button>
             )}
           </div>
-          <div>
-            <button className="btn-link small" style={{ color: "var(--ink-2)" }} onClick={back}>
-              <Undo2 size={14} style={{ verticalAlign: -2 }} /> Вернуться к выбору условий
-            </button>
-          </div>
+          {!app.permissions.can_sign && <AskSigner app={app} what="Подписать кредитный договор" />}
+          {app.permissions.can_sign && (
+            <div>
+              <button className="btn-link small" style={{ color: "var(--ink-2)" }} onClick={back}>
+                <Undo2 size={14} style={{ verticalAlign: -2 }} /> Вернуться к выбору условий
+              </button>
+            </div>
+          )}
         </div>
       </section>
       {preview && contract.data && (
