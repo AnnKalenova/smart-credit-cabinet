@@ -86,6 +86,8 @@ jobs:
         run: |
           pip install httpx
           python e2e/api_scenarios.py --base-url http://localhost:8080
+      - name: Postman-коллекция (newman)
+        run: npx --yes newman@6.2.3 run docs/postman/smart-credit-cabinet.postman_collection.json --env-var baseUrl=http://localhost:8080
       - name: Проверка веб-интерфейса и Swagger
         run: |
           curl -fsS http://localhost:8080/ | grep -qi "<!doctype html"
