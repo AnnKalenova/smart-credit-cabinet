@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+node_modules/
+frontend/dist/
+.pytest_cache/
+.ruff_cache/
+*.log
+/data/uploads/
+e2e/screenshots-tmp/
+.DS_Store
