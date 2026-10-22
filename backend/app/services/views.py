@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.domain.enums import (
     DECISION_LABELS,
     DOC_TYPES,
@@ -37,7 +39,12 @@ from app.models import (
     ScoringResult,
     User,
 )
-from app.services.workflow import utcnow
+from app.services.workflow import local_today, utcnow
+
+
+def local_time(dt):
+    """Время в часовом поясе клиента (по умолчанию московское) — сервер в контейнере живёт в UTC."""
+    return dt.astimezone(ZoneInfo(get_settings().display_timezone))
 
 
 def fmt_money(v) -> str:
@@ -76,7 +83,7 @@ def document_out(d) -> dict:
 
 
 def schedule_for(offer) -> list[dict]:
-    start = (offer.accepted_at or utcnow()).date()
+    start = local_time(offer.accepted_at or utcnow()).date()
     if offer.product.repayment_type == "REVOLVING":
         return build_revolving_schedule(float(offer.amount), float(offer.rate), offer.term_months, start)
     return build_annuity_schedule(float(offer.amount), float(offer.rate), offer.term_months, start)
@@ -254,11 +261,11 @@ def client_status_view(app: Application, offers: list[Offer]) -> dict:
     if app.status == AppStatus.MANUAL_REVIEW and app.review_due_at:
         view["next"] = (
             "Решение появится здесь же, в кабинете, ориентировочно до "
-            f"{app.review_due_at.astimezone().strftime('%d.%m %H:%M')}. Если понадобятся документы, мы напишем в этой заявке."
+            f"{local_time(app.review_due_at).strftime('%d.%m %H:%M')}. Если понадобятся документы, мы напишем в этой заявке."
         )
     if app.status == AppStatus.OFFER_READY and offers:
         until = min(o.valid_until for o in offers)
-        view["next"] = f"Выберите вариант и примите предложение до {until.astimezone().strftime('%d.%m.%Y')}."
+        view["next"] = f"Выберите вариант и примите предложение до {local_time(until).strftime('%d.%m.%Y')}."
     return view
 
 
@@ -322,9 +329,11 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
                 "can_edit": app.status == AppStatus.DRAFT,
                 "can_submit": app.status == AppStatus.DRAFT and member.can_sign,
                 "can_sign": member.can_sign,
-                "can_cancel": app.status in CLIENT_CANCELLABLE,
+                "can_cancel": can_cancel(app, member),
                 "can_answer": app.status == AppStatus.NEEDS_INFO,
-                "can_accept": app.status == AppStatus.OFFER_READY,
+                "can_accept": app.status == AppStatus.OFFER_READY and member.can_sign,
+                "can_request_signature": app.status in (AppStatus.DRAFT, AppStatus.OFFER_READY, AppStatus.SIGNING)
+                and not member.can_sign,
                 "can_reapply": app.status
                 in (AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED),
                 "signers": signers,
@@ -344,9 +353,37 @@ def _triggers(d: Decision | None) -> list[str]:
     return [r["text"] for r in d.reasons if r.get("kind") == "MANUAL"]
 
 
-def bank_row(db: Session, app: Application) -> dict:
-    scoring = latest_scoring(db, app.id)
-    d = latest_decision(db, app.id)
+def can_cancel(app: Application, member: CompanyMember) -> bool:
+    """Отозвать отправленную заявку может подписант; свой черновик — и его автор."""
+    if app.status not in CLIENT_CANCELLABLE:
+        return False
+    return member.can_sign or (app.status == AppStatus.DRAFT and app.created_by_id == member.user_id)
+
+
+_UNSET = object()
+
+
+def bank_rows(db: Session, apps: list[Application]) -> list[dict]:
+    """Строки реестра без N+1: последние скоринг и решение по всем заявкам — двумя запросами."""
+    ids = [a.id for a in apps]
+    if not ids:
+        return []
+    scorings: dict = {}
+    for r in db.scalars(select(ScoringResult).where(ScoringResult.application_id.in_(ids)).order_by(ScoringResult.id)):
+        scorings[r.application_id] = r  # остаётся последний по порядку
+    decisions: dict = {}
+    for d in db.scalars(
+        select(Decision).where(Decision.application_id.in_(ids)).order_by(Decision.created_at, Decision.id)
+    ):
+        decisions[d.application_id] = d
+    return [bank_row(db, a, scorings.get(a.id), decisions.get(a.id)) for a in apps]
+
+
+def bank_row(db: Session, app: Application, scoring=_UNSET, d=_UNSET) -> dict:
+    if scoring is _UNSET:
+        scoring = latest_scoring(db, app.id)
+    if d is _UNSET:
+        d = latest_decision(db, app.id)
     now = utcnow()
     return {
         "id": app.id,
@@ -639,4 +676,4 @@ def revenue_estimate(stats_avg: float) -> float:
 
 
 def as_of_today() -> date:
-    return utcnow().date()
+    return local_today()

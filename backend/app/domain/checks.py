@@ -120,7 +120,8 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
             )
         )
 
-    if product.collateral == "REQUIRED" and not (app.collateral_description or "").strip():
+    collateral_needed = product.collateral == "REQUIRED" or app.has_collateral
+    if collateral_needed and not (app.collateral_description or "").strip():
         checks.append(
             Check(
                 "collateral_description",
@@ -130,7 +131,9 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
                     "code": "collateral",
                     "type": "FIELD",
                     "field": "collateral_description",
-                    "label": "Опишите приобретаемое имущество (что, у кого, стоимость)",
+                    "label": "Опишите приобретаемое имущество (что, у кого, стоимость)"
+                    if product.collateral == "REQUIRED"
+                    else "Опишите имущество, которое предлагаете в залог",
                 },
             )
         )

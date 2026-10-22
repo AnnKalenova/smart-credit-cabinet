@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, contains_eager, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.db import get_db
@@ -21,7 +21,7 @@ from app.domain.enums import (
     JobStage,
     Role,
 )
-from app.domain.policy import POLICY_VERSION, ProductParams, _conditions, _offer, price
+from app.domain.policy import POLICY_VERSION, ProductParams, _offer, price
 from app.domain.scoring import months_between
 from app.integrations.client import ExternalSystems, IntegrationError
 from app.models import Application, ApplicationDocument, Company, Decision, InfoRequest, Message, Product, Setting, User
@@ -29,8 +29,17 @@ from app.schemas import BankApplicationRow, BankDecisionIn, FaultIn, MessageIn, 
 from app.security import require_roles
 from app.services import storage
 from app.services.pipeline import create_offers
-from app.services.views import bank_application_out, bank_row, dashboard, latest_scoring, message_out
-from app.services.workflow import DEFAULT_SETTINGS, add_event, enqueue, key_rate, notify_company, transition, utcnow
+from app.services.views import bank_application_out, bank_rows, dashboard, latest_scoring, message_out
+from app.services.workflow import (
+    DEFAULT_SETTINGS,
+    add_event,
+    enqueue,
+    key_rate,
+    local_today,
+    notify_company,
+    transition,
+    utcnow,
+)
 
 router = APIRouter(prefix="/api/v1/bank", tags=["Банк: обработка заявок"])
 staff = require_roles(Role.ANALYST, Role.RISK_MANAGER)
@@ -81,7 +90,10 @@ def list_applications(
         query = query.order_by(Application.review_due_at.asc().nulls_last())
     else:
         query = query.order_by(Application.status_changed_at.desc())
-    return [bank_row(db, a) for a in db.scalars(query.limit(200))]
+    query = query.options(
+        contains_eager(Application.company), selectinload(Application.product), selectinload(Application.assignee)
+    )
+    return bank_rows(db, list(db.scalars(query.limit(200))))
 
 
 @router.get("/applications/{app_id}", summary="Досье заявки: данные источников, скоринг, решения, журнал")
@@ -91,7 +103,7 @@ def get_application(app_id: uuid.UUID, db: Session = Depends(get_db), user: User
     scoring = latest_scoring(db, app.id)
     grade = scoring.grade if scoring else "C"
     kr = key_rate(db)
-    tenure = months_between(app.company.client_since, utcnow().date())
+    tenure = months_between(app.company.client_since, local_today())
     data["pricing_hints"] = []
     for p in db.scalars(select(Product).where(Product.is_active.is_(True)).order_by(Product.sort_order)):
         params = ProductParams.from_orm(p)
@@ -161,7 +173,7 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
     scoring = latest_scoring(db, app.id)
     grade = scoring.grade if scoring else "C"
     kr = key_rate(db)
-    tenure = months_between(app.company.client_since, utcnow().date())
+    tenure = months_between(app.company.client_since, local_today())
 
     if body.action == "APPROVE":
         if not body.offers:
@@ -172,6 +184,10 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
             if product is None or not product.is_active:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Продукт {o.product_code} не найден")
             params = ProductParams.from_orm(product)
+            if app.purpose not in params.purposes:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT, f"Продукт «{params.name}» не подходит для цели заявки"
+                )
             if not params.min_amount <= o.amount <= params.max_amount:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT, f"Сумма вне условий продукта «{params.name}»"
@@ -196,8 +212,9 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
                 and o.term_months == app.term_months
             )
             label = o.label or ("Запрошенные условия" if same else "Условия, согласованные специалистом")
-            draft = _offer(params, o.amount, o.term_months, rate, pricing, app.owner_guarantee, not same, label)
-            draft.conditions = _conditions(params, o.amount, app.owner_guarantee)
+            draft = _offer(
+                params, o.amount, o.term_months, rate, pricing, app.owner_guarantee, not same, label, app.has_collateral
+            )
             drafts.append(draft)
         outcome = (
             DecisionOutcome.APPROVE if len(drafts) == 1 and not drafts[0].is_counter else DecisionOutcome.COUNTER_OFFER

@@ -42,7 +42,7 @@ from app.models import (
     ScoringResult,
 )
 from app.services import assessment
-from app.services.workflow import add_event, enqueue, key_rate, transition, utcnow
+from app.services.workflow import add_event, enqueue, key_rate, local_today, transition, utcnow
 
 log = logging.getLogger("pipeline")
 settings = get_settings()
@@ -215,7 +215,7 @@ def stage_scoring(db: Session, app: Application, job: PipelineJob) -> None:
         return
     sources = assessment.enrichment(db, app.id)
     stats = assessment.company_turnover(db, app.company_id)
-    inp = assessment.build_scoring_input(app, stats, sources, key_rate(db), utcnow().date())
+    inp = assessment.build_scoring_input(app, stats, sources, key_rate(db), local_today())
     outcome = score(inp)
     db.add(
         ScoringResult(
@@ -335,7 +335,7 @@ def stage_decision(db: Session, app: Application, job: PipelineJob) -> None:
         select(ScoringResult).where(ScoringResult.application_id == app.id).order_by(ScoringResult.id.desc())
     )
     scoring = assessment.scoring_from_row(row)
-    inp = assessment.build_policy_input(db, app, scoring, sources, stats, key_rate(db), utcnow().date())
+    inp = assessment.build_policy_input(db, app, scoring, sources, stats, key_rate(db), local_today())
     result = evaluate(inp)
     apply_policy_result(db, app, result)
 
@@ -364,7 +364,7 @@ def stage_disbursement(db: Session, app: Application, job: PipelineJob) -> None:
             }
         )
     issued_at = utcnow()
-    start = issued_at.date()
+    start = local_today()
     if offer.product.repayment_type == "REVOLVING":
         schedule = build_revolving_schedule(float(offer.amount), float(offer.rate), offer.term_months, start)
     else:
@@ -416,17 +416,27 @@ FAILURE_HANDLERS = {
 
 
 def expire_offers(db: Session) -> int:
-    """Закрывает заявки, по которым клиент не принял предложение вовремя."""
+    """Закрывает заявки, по которым клиент не принял предложение или не подписал договор вовремя."""
     now = utcnow()
     expired = 0
-    apps = db.scalars(select(Application).where(Application.status == AppStatus.OFFER_READY))
+    apps = db.scalars(
+        select(Application).where(Application.status.in_([AppStatus.OFFER_READY, AppStatus.SIGNING]))
+    ).all()
     for app in apps:
-        offers = list(
-            db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE))
-        )
+        if app.status == AppStatus.OFFER_READY:
+            offers = list(
+                db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE))
+            )
+            title = "Срок действия предложения истёк"
+        else:
+            # выбранный вариант тоже действует до даты в предложении: договор по нему после срока не подписать
+            offers = list(
+                db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACCEPTED))
+            )
+            title = "Срок действия предложения истёк до подписания договора"
         if offers and all(o.valid_until < now for o in offers):
             for o in offers:
                 o.status = OfferStatus.EXPIRED
-            transition(db, app, AppStatus.EXPIRED, title="Срок действия предложения истёк")
+            transition(db, app, AppStatus.EXPIRED, title=title)
             expired += 1
     return expired

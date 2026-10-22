@@ -59,6 +59,7 @@ def test_terminal_statuses_have_no_exits():
         ("MANUAL_REVIEW", "ENRICHMENT"),
         ("OFFER_READY", "SIGNING"),
         ("SIGNING", "OFFER_READY"),
+        ("SIGNING", "EXPIRED"),
         ("DISBURSEMENT", "ISSUED"),
     ],
 )
@@ -105,6 +106,7 @@ def _app(**overrides) -> SimpleNamespace:
         "declared_revenue": 228_000_000,
         "contact_name": "Лебедев И. О.",
         "contact_phone": "+7 900 000-03-01",
+        "has_collateral": False,
         "collateral_description": "Обрабатывающий центр с ЧПУ",
     }
     base.update(overrides)
@@ -171,3 +173,15 @@ def test_required_documents_rules():
     assert required_documents(wc, 1_000_000, "CONTRACT", "LEGAL") == ["CONTRACT_COPY"]
     assert required_documents(_product("INVESTMENT"), 2_000_000, "EQUIPMENT", "IP") == ["SUPPLIER_INVOICE"]
     assert required_documents(_product("EXPRESS"), 5_000_000, "OTHER", "LEGAL") == []
+
+
+def test_precheck_requires_description_of_offered_collateral():
+    wc = _product("WORKING_CAPITAL")
+    app = _app(
+        amount=3_000_000, term_months=12, purpose="WORKING_CAPITAL", has_collateral=True, collateral_description=" "
+    )
+    check = next(c for c in precheck(app, wc, COMPANY, [], CONSENTS) if c.code == "collateral_description")
+    assert check.severity == "MISSING"
+    assert check.info_item["label"] == "Опишите имущество, которое предлагаете в залог"
+    app.has_collateral = False
+    assert "collateral_description" not in _bad(precheck(app, wc, COMPANY, [], CONSENTS))

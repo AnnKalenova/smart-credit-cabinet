@@ -281,3 +281,39 @@ def test_revolving_limit_is_turnover_based():
 def test_indicative_rate_takes_required_collateral_into_account():
     assert indicative_rate(PRODUCTS["EXPRESS"], KEY_RATE) == 22.0
     assert indicative_rate(PRODUCTS["INVESTMENT"], KEY_RATE) == 18.0
+
+
+# --------------------------------------------------------------------------- тексты причин и условия предложения
+
+
+def test_registry_status_is_explained_in_plain_words():
+    legal = evaluate(_input(egrul={"status": "LIQUIDATING", "status_text": "Находится в стадии ликвидации"}))
+    reason = next(r for r in legal.reasons if r.code == "company_status")
+    assert reason.client_text == "По данным ЕГРЮЛ компания находится в стадии ликвидации"
+
+    ip = evaluate(_input(company_kind="IP", egrul={"status": "CEASED", "status_text": "Прекратил деятельность"}))
+    reason = next(r for r in ip.reasons if r.code == "company_status")
+    assert reason.client_text == "По данным ЕГРИП предприниматель прекратил деятельность"
+
+    unknown = evaluate(_input(egrul={"status": "SPECIAL", "status_text": "Особый статус"}))
+    reason = next(r for r in unknown.reasons if r.code == "company_status")
+    assert "«Особый статус»" in reason.client_text and "действующему бизнесу" in reason.client_text
+
+
+def test_director_change_date_is_formatted_for_people():
+    result = evaluate(_input(egrul={"status": "ACTIVE", "director": {"since": "2026-08-15"}}))
+    reason = next(r for r in result.reasons if r.code == "director_changed")
+    assert reason.text == "Смена руководителя 15.08.2026"
+
+
+def test_declared_collateral_becomes_offer_condition_with_discount():
+    with_collateral = evaluate(_input(has_collateral=True))
+    offer = with_collateral.offers[0]
+    assert "Залог имущества, указанного в заявке" in offer.conditions
+    assert any(p["label"] == "Скидка за залог" for p in offer.pricing["parts"])
+
+    without = evaluate(_input())
+    assert not any("Залог" in c for c in without.offers[0].conditions)
+
+    investment = evaluate(_input(product="INVESTMENT", purpose="EQUIPMENT", amount=2_000_000, term_months=24))
+    assert "Залог приобретаемого имущества" in investment.offers[0].conditions

@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -28,7 +28,7 @@ from app.domain.enums import (
     SignPurpose,
 )
 from app.domain.products import required_documents
-from app.domain.statuses import CLIENT_CANCELLABLE
+from app.domain.statuses import CLIENT_CANCELLABLE, CLIENT_STATUS
 from app.models import (
     Application,
     ApplicationDocument,
@@ -60,6 +60,7 @@ from app.security import get_client_application, hash_code, require_company_memb
 from app.services import assessment, storage
 from app.services.views import (
     application_out,
+    can_cancel,
     document_out,
     message_out,
     offer_out,
@@ -86,6 +87,7 @@ EDITABLE_FIELDS = {
     "contact_name",
     "contact_phone",
 }
+SIGN_CODES_PER_10_MIN = 10
 INFO_EDITABLE_FIELDS = {
     "declared_revenue",
     "collateral_description",
@@ -110,16 +112,19 @@ def _out(db: Session, app: Application, member: CompanyMember) -> dict:
 
 def _require_status(app: Application, *allowed: AppStatus) -> None:
     if app.status not in allowed:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Действие недоступно в статусе заявки «{app.status}»")
-
-
-def _require_signer(member: CompanyMember) -> None:
-    if not member.can_sign:
+        title = CLIENT_STATUS[AppStatus(app.status)][0]
         raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Подписывать может руководитель или представитель по доверенности. "
-            "Нажмите «Передать на подпись», и мы уведомим руководителя.",
+            status.HTTP_409_CONFLICT, f"Действие недоступно: заявка в статусе «{title}». Обновите страницу"
         )
+
+
+def _require_signer(member: CompanyMember, action: str = "Подписывать", hint: bool = True) -> None:
+    """Юридически значимые действия от имени компании — только у лиц с правом подписи."""
+    if not member.can_sign:
+        text = f"{action} может руководитель или представитель по доверенности."
+        if hint:
+            text += " Нажмите «Передать на подпись», и мы уведомим руководителя."
+        raise HTTPException(status.HTTP_403_FORBIDDEN, text)
 
 
 # --------------------------------------------------------------------------- черновик
@@ -141,6 +146,12 @@ def list_applications(company_id: uuid.UUID, db: Session = Depends(get_db), user
     summary="Создать черновик заявки (данные компании подставляются автоматически)",
 )
 def create_application(body: ApplicationCreate, db: Session = Depends(get_db), user: User = Depends(client_only)):
+    app, member = _new_application(db, user, body)
+    _commit(db)
+    return _out(db, app, member)
+
+
+def _new_application(db: Session, user: User, body: ApplicationCreate) -> tuple[Application, CompanyMember]:
     member = require_company_member(db, user, body.company_id)
     product = db.get(Product, body.product_code)
     if product is None or not product.is_active:
@@ -176,8 +187,7 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db), u
     db.flush()
     title = f"Создан черновик заявки на основе № {parent.number}" if parent else "Создан черновик заявки"
     add_event(db, app, "CREATED", title, actor_type=ActorType.CLIENT, actor_id=user.id, to_status=AppStatus.DRAFT)
-    _commit(db)
-    return _out(db, app, member)
+    return app, member
 
 
 @router.get("/{app_id}", response_model=ApplicationOut, summary="Заявка: статус, что дальше, предложения, история")
@@ -255,10 +265,13 @@ async def upload_document(
 ):
     app, _ = get_client_application(db, user, app_id)
     _require_status(app, AppStatus.DRAFT, AppStatus.NEEDS_INFO)
-    content = await file.read()
-    doc = _save_document(
-        db, app, user, doc_type, file.filename or "document", content, file.content_type or "application/octet-stream"
-    )
+    limit = settings.max_upload_mb * 1024 * 1024
+    content = await file.read(limit + 1)
+    if len(content) > limit:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"Файл больше {settings.max_upload_mb} МБ")
+    file_name = file.filename or "document"
+    content_type = storage.resolve_type(file_name, file.content_type)
+    doc = _save_document(db, app, user, doc_type, file_name, content, content_type)
     return document_out(doc)
 
 
@@ -300,6 +313,15 @@ def delete_document(
     if doc is None or doc.application_id != app.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Документ не найден")
     storage.delete(doc.storage_key)
+    add_event(
+        db,
+        app,
+        "DOCUMENT_DELETED",
+        f"Удалён документ: {DOC_TYPES.get(doc.doc_type, doc.doc_type)}",
+        actor_type=ActorType.CLIENT,
+        actor_id=user.id,
+        payload={"file_name": doc.file_name, "sha256": doc.sha256},
+    )
     db.delete(doc)
     _commit(db)
 
@@ -333,6 +355,19 @@ def create_sign_challenge(
 ):
     app, member = get_client_application(db, user, app_id)
     _require_signer(member)
+    recent = db.scalar(
+        select(func.count())
+        .select_from(SignChallenge)
+        .where(
+            SignChallenge.application_id == app.id,
+            SignChallenge.user_id == user.id,
+            SignChallenge.created_at > utcnow() - timedelta(minutes=10),
+        )
+    )
+    if recent >= SIGN_CODES_PER_10_MIN:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов кода — попробуйте через 10 минут"
+        )
     if body.purpose == SignPurpose.CONSENTS:
         _require_status(app, AppStatus.DRAFT)
         documents = [CONSENT_TEXTS[ConsentType.BKI_REQUEST], CONSENT_TEXTS[ConsentType.PERSONAL_DATA]]
@@ -399,8 +434,12 @@ def sign_consents(
 )
 def request_signature(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
     app, member = get_client_application(db, user, app_id)
-    _require_status(app, AppStatus.DRAFT, AppStatus.SIGNING)
-    what = "подписать согласия и отправить заявку" if app.status == AppStatus.DRAFT else "подписать кредитный договор"
+    _require_status(app, AppStatus.DRAFT, AppStatus.OFFER_READY, AppStatus.SIGNING)
+    what = {
+        AppStatus.DRAFT: "подписать согласия и отправить заявку",
+        AppStatus.OFFER_READY: "выбрать вариант предложения и подписать договор",
+        AppStatus.SIGNING: "подписать кредитный договор",
+    }[AppStatus(app.status)]
     notify_company(
         db,
         app,
@@ -439,7 +478,7 @@ def submit_problems(db: Session, app: Application) -> list[str]:
         problems.append("Укажите выручку за последние 12 месяцев")
     if not (app.contact_name and app.contact_phone):
         problems.append("Укажите контактное лицо и телефон")
-    if p.collateral == "REQUIRED" and not (app.collateral_description or "").strip():
+    if (p.collateral == "REQUIRED" or app.has_collateral) and not (app.collateral_description or "").strip():
         problems.append("Опишите имущество, которое будет в залоге")
     have = {d.doc_type for d in app.documents}
     missing = [DOC_TYPES[t] for t in required_documents(p, amount, app.purpose, app.company.kind) if t not in have]
@@ -494,11 +533,11 @@ def info_response(
         for key, value in body.fields.model_dump(exclude_unset=True).items():
             if key in INFO_EDITABLE_FIELDS or (key in ("amount", "term_months") and value):
                 setattr(app, key, value)
+    # запрошенный документ засчитывается, только если его приложили после запроса банка
     have_new = {d.doc_type for d in app.documents if d.uploaded_at >= req.created_at}
-    have_any = {d.doc_type for d in app.documents}
     problems = []
     for item in req.items:
-        if item["type"] == "DOCUMENT" and item["doc_type"] not in have_new and item["doc_type"] not in have_any:
+        if item["type"] == "DOCUMENT" and item["doc_type"] not in have_new:
             problems.append(f"Приложите: {item['label']}")
         if item["type"] == "COMMENT" and not (body.comment or "").strip():
             problems.append(f"Ответьте: {item['label']}")
@@ -525,13 +564,14 @@ def cancel(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depend
     app, member = get_client_application(db, user, app_id)
     if app.status not in CLIENT_CANCELLABLE:
         raise HTTPException(status.HTTP_409_CONFLICT, "Заявку уже нельзя отозвать")
+    if not can_cancel(app, member):
+        _require_signer(member, "Отозвать заявку", hint=False)
     for req in db.scalars(
         select(InfoRequest).where(InfoRequest.application_id == app.id, InfoRequest.status == InfoRequestStatus.OPEN)
     ):
         req.status = InfoRequestStatus.CANCELLED
-    transition(
-        db, app, AppStatus.CANCELLED, actor_type=ActorType.CLIENT, actor_id=user.id, title="Заявка отозвана клиентом"
-    )
+    title = "Черновик отменён" if app.status == AppStatus.DRAFT else "Заявка отозвана клиентом"
+    transition(db, app, AppStatus.CANCELLED, actor_type=ActorType.CLIENT, actor_id=user.id, title=title)
     _commit(db)
     return _out(db, app, member)
 
@@ -544,6 +584,7 @@ def accept_offer(
     app_id: uuid.UUID, offer_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)
 ):
     app, member = get_client_application(db, user, app_id)
+    _require_signer(member, "Выбрать условия кредита")
     _require_status(app, AppStatus.OFFER_READY)
     offer = db.get(Offer, offer_id)
     if offer is None or offer.application_id != app.id or offer.status != OfferStatus.ACTIVE:
@@ -554,16 +595,15 @@ def accept_offer(
         o.status = OfferStatus.SUPERSEDED
     offer.status = OfferStatus.ACCEPTED
     offer.accepted_at = utcnow()
-    amount = f"{float(offer.amount):,.0f}".replace(",", " ")
+    amount = f"{float(offer.amount):,.0f}".replace(",", "\u00a0")
+    rate = f"{float(offer.rate):.1f}".replace(".", ",")
     transition(
         db,
         app,
         AppStatus.SIGNING,
         actor_type=ActorType.CLIENT,
         actor_id=user.id,
-        title=f"Выбрано предложение: {amount} ₽ на {offer.term_months} мес. под {float(offer.rate):.1f}%".replace(
-            ".", ","
-        ),
+        title=f"Выбрано предложение: {amount}\u00a0₽ на {offer.term_months} мес. под {rate}%",
     )
     _commit(db)
     return _out(db, app, member)
@@ -572,6 +612,7 @@ def accept_offer(
 @router.post("/{app_id}/offers/decline", response_model=ApplicationOut, summary="Отказаться от предложения")
 def decline_offers(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
     app, member = get_client_application(db, user, app_id)
+    _require_signer(member, "Отказаться от предложения", hint=False)
     _require_status(app, AppStatus.OFFER_READY)
     for o in db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE)):
         o.status = OfferStatus.DECLINED
@@ -590,12 +631,28 @@ def decline_offers(app_id: uuid.UUID, db: Session = Depends(get_db), user: User 
 @router.post("/{app_id}/signing/back", response_model=ApplicationOut, summary="Вернуться к выбору условий")
 def back_to_offers(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
     app, member = get_client_application(db, user, app_id)
+    _require_signer(member, "Вернуться к выбору условий", hint=False)
     _require_status(app, AppStatus.SIGNING)
     accepted = db.scalar(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACCEPTED))
+    if accepted is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Выбранное предложение не найдено. Обновите страницу")
+    now = utcnow()
+    reopened = 0
     for o in db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.decision_id == accepted.decision_id)):
-        if o.status in (OfferStatus.ACCEPTED, OfferStatus.SUPERSEDED) and o.valid_until > utcnow():
+        if o.status not in (OfferStatus.ACCEPTED, OfferStatus.SUPERSEDED):
+            continue
+        if o.valid_until > now:
             o.status = OfferStatus.ACTIVE
             o.accepted_at = None
+            reopened += 1
+        else:
+            o.status = OfferStatus.EXPIRED
+    if not reopened:
+        transition(db, app, AppStatus.EXPIRED, title="Срок действия предложения истёк")
+        _commit(db)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Срок действия предложения истёк. Можно подать новую заявку с этими данными"
+        )
     transition(
         db,
         app,
@@ -647,6 +704,16 @@ def sign_contract(
     app, member = get_client_application(db, user, app_id)
     _require_signer(member)
     _require_status(app, AppStatus.SIGNING)
+    offer = db.scalar(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACCEPTED))
+    if offer is None or offer.valid_until < utcnow():
+        # условия действуют ограниченное время: после срока договор по ним не заключается
+        if offer is not None:
+            offer.status = OfferStatus.EXPIRED
+        transition(db, app, AppStatus.EXPIRED, title="Срок действия предложения истёк до подписания договора")
+        _commit(db)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Срок действия предложения истёк. Можно подать новую заявку с этими данными"
+        )
     _verify_challenge(db, app, user, SignPurpose.CONTRACT, body.challenge_id, body.code)
     add_event(
         db,
@@ -678,18 +745,49 @@ def sign_contract(
     summary="Подать новую заявку на основе закрытой",
 )
 def reapply(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
-    app, _ = get_client_application(db, user, app_id)
-    _require_status(app, AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED)
+    parent, _ = get_client_application(db, user, app_id)
+    _require_status(parent, AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED)
     body = ApplicationCreate(
-        company_id=app.company_id,
-        product_code=app.product_code,
-        amount=float(app.amount),
-        term_months=app.term_months,
-        purpose=app.purpose,
-        purpose_details=app.purpose_details,
-        parent_id=app.id,
+        company_id=parent.company_id,
+        product_code=parent.product_code,
+        amount=float(parent.amount),
+        term_months=parent.term_months,
+        purpose=parent.purpose,
+        purpose_details=parent.purpose_details,
+        parent_id=parent.id,
     )
-    return create_application(body, db, user)
+    app, member = _new_application(db, user, body)
+    # Документы переносятся копиями: у новой заявки свои файлы. Согласия не переносятся — их подписывают заново
+    copied = []
+    for d in parent.documents:
+        try:
+            key = storage.copy(d.storage_key, app.id)
+        except (storage.StorageError, OSError):
+            continue  # файла нет в хранилище — клиент приложит его заново
+        db.add(
+            ApplicationDocument(
+                application_id=app.id,
+                doc_type=d.doc_type,
+                file_name=d.file_name,
+                content_type=d.content_type,
+                size_bytes=d.size_bytes,
+                sha256=d.sha256,
+                storage_key=key,
+                uploaded_by_id=user.id,
+            )
+        )
+        copied.append(DOC_TYPES.get(d.doc_type, d.doc_type))
+    if copied:
+        add_event(
+            db,
+            app,
+            "DOCUMENTS_COPIED",
+            f"Перенесены документы из заявки № {parent.number}: {', '.join(copied)}",
+            actor_type=ActorType.CLIENT,
+            actor_id=user.id,
+        )
+    _commit(db)
+    return _out(db, app, member)
 
 
 @router.get("/{app_id}/messages", response_model=list[MessageOut], summary="Переписка с банком по заявке")

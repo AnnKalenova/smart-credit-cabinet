@@ -193,10 +193,13 @@ def max_limit(
     return limit, calc
 
 
-def _conditions(product: ProductParams, amount: float, owner_guarantee: bool) -> list[str]:
+def _conditions(product: ProductParams, amount: float, owner_guarantee: bool, has_collateral: bool) -> list[str]:
     conds: list[str] = []
     if product.collateral == "REQUIRED":
         conds.append("Залог приобретаемого имущества")
+    elif has_collateral:
+        # скидка за залог в ставке → залог становится условием предложения
+        conds.append("Залог имущества, указанного в заявке")
     if owner_guarantee or (product.code == "WORKING_CAPITAL" and amount > 10_000_000):
         conds.append("Поручительство собственника бизнеса")
     if product.repayment_type == "REVOLVING":
@@ -216,6 +219,7 @@ def _offer(
     owner_guarantee: bool,
     is_counter: bool,
     label: str,
+    has_collateral: bool,
 ) -> OfferDraft:
     monthly, interest = offer_economics(amount, rate, term, product.repayment_type)
     return OfferDraft(
@@ -227,7 +231,7 @@ def _offer(
         monthly_payment=monthly,
         total_interest=interest,
         repayment_type=product.repayment_type,
-        conditions=_conditions(product, amount, owner_guarantee),
+        conditions=_conditions(product, amount, owner_guarantee, has_collateral),
         pricing={"parts": pricing, "rate": rate},
         is_counter=is_counter,
         label=label,
@@ -242,19 +246,33 @@ def _rub(v: float) -> str:
 # --------------------------------------------------------------------------- правила
 
 
+# Как объяснить клиенту недействующий статус в реестре: (для юрлица, для ИП)
+REGISTRY_STATUS_TEXT = {
+    "LIQUIDATING": ("компания находится в стадии ликвидации", None),
+    "LIQUIDATED": ("компания ликвидирована", None),
+    "REORGANIZING": ("компания находится в процессе реорганизации", None),
+    "BANKRUPTCY": (
+        "в отношении компании ведётся процедура банкротства",
+        "в отношении предпринимателя ведётся процедура банкротства",
+    ),
+    "CEASED": ("компания прекратила деятельность", "предприниматель прекратил деятельность"),
+}
+
+
 def stop_factors(inp: PolicyInput) -> list[Reason]:
     reasons: list[Reason] = []
     status = inp.egrul.get("status", "ACTIVE")
     if status != "ACTIVE":
-        status_text = inp.egrul.get("status_text", status).lower()
-        reasons.append(
-            Reason(
-                "company_status",
-                "STOP",
-                f"Статус по ЕГРЮЛ/ЕГРИП: {status_text}",
-                f"По данным ЕГРЮЛ компания находится в статусе «{status_text}»",
-            )
+        status_text = inp.egrul.get("status_text", status)
+        is_ip = inp.company_kind == "IP"
+        registry = "ЕГРИП" if is_ip else "ЕГРЮЛ"
+        state = REGISTRY_STATUS_TEXT.get(status, (None, None))[1 if is_ip else 0]
+        client_text = (
+            f"По данным {registry} {state}"
+            if state
+            else f"По данным {registry} статус — «{status_text}», а кредит выдаётся только действующему бизнесу"
         )
+        reasons.append(Reason("company_status", "STOP", f"Статус по {registry}: {status_text.lower()}", client_text))
     overdue12 = int(inp.bki.get("max_overdue_days_12m", 0) or 0)
     current = int(inp.bki.get("current_overdue_days", 0) or 0)
     if overdue12 > 90 or current > 90:
@@ -373,7 +391,8 @@ def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info:
         )
     director_since = inp.egrul.get("director", {}).get("since")
     if director_since and months_between(date.fromisoformat(director_since), inp.as_of) < 6:
-        reasons.append(Reason("director_changed", "MANUAL", f"Смена руководителя {director_since}", ""))
+        since = date.fromisoformat(director_since).strftime("%d.%m.%Y")
+        reasons.append(Reason("director_changed", "MANUAL", f"Смена руководителя {since}", ""))
     if unresolved_info:
         reasons.append(
             Reason(
@@ -439,7 +458,15 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
     if requested_fits:
         offers.append(
             _offer(
-                product, inp.amount, inp.term_months, rate, pricing, inp.owner_guarantee, False, "Запрошенные условия"
+                product,
+                inp.amount,
+                inp.term_months,
+                rate,
+                pricing,
+                inp.owner_guarantee,
+                False,
+                "Запрошенные условия",
+                inp.has_collateral,
             )
         )
     else:
@@ -465,7 +492,15 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
                 if inp.amount <= lim_t:
                     offers.append(
                         _offer(
-                            product, inp.amount, t, rate, pricing, inp.owner_guarantee, True, f"Вся сумма на {t} мес."
+                            product,
+                            inp.amount,
+                            t,
+                            rate,
+                            pricing,
+                            inp.owner_guarantee,
+                            True,
+                            f"Вся сумма на {t} мес.",
+                            inp.has_collateral,
                         )
                     )
                     break
@@ -481,6 +516,7 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
                     inp.owner_guarantee,
                     True,
                     "Меньшая сумма на тот же срок",
+                    inp.has_collateral,
                 )
             )
         # Вариант В: другой продукт под ту же цель
@@ -517,6 +553,7 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
                             inp.owner_guarantee,
                             True,
                             f"Другой продукт: {alt.name}",
+                            inp.has_collateral,
                         )
                     )
                     break

@@ -12,7 +12,7 @@ TRANSITIONS: dict[S, set[S]] = {
     S.DECISION: {S.OFFER_READY, S.NEEDS_INFO, S.MANUAL_REVIEW, S.DECLINED, S.CANCELLED},
     S.MANUAL_REVIEW: {S.OFFER_READY, S.NEEDS_INFO, S.DECLINED, S.CANCELLED, S.ENRICHMENT},
     S.OFFER_READY: {S.SIGNING, S.CLIENT_DECLINED, S.EXPIRED},
-    S.SIGNING: {S.DISBURSEMENT, S.OFFER_READY},
+    S.SIGNING: {S.DISBURSEMENT, S.OFFER_READY, S.EXPIRED},
     S.DISBURSEMENT: {S.ISSUED},
     S.ISSUED: set(),
     S.DECLINED: set(),
@@ -111,7 +111,7 @@ CLIENT_STATUS = {
     S.ISSUED: (
         "Кредит выдан",
         "Деньги зачислены на расчётный счёт.",
-        "График платежей доступен в разделе «Мои кредиты».",
+        "График платежей — в разделе «Кредиты» на главной странице кабинета.",
     ),
     S.DECLINED: (
         "Отказ",
@@ -126,7 +126,7 @@ CLIENT_STATUS = {
     S.CANCELLED: ("Заявка отозвана", "Заявка закрыта по вашему решению.", "Можно подать новую заявку в любой момент."),
     S.EXPIRED: (
         "Срок предложения истёк",
-        "Предложение не было принято вовремя.",
+        "Предложение не было принято или договор не был подписан вовремя.",
         "Подайте новую заявку — данные заполнятся автоматически.",
     ),
 }
