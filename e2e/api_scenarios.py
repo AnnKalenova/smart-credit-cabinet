@@ -51,14 +51,24 @@ def prepare(c: Client, product: str, purpose: str, amount: float, term: int, doc
     app = c.req(
         "POST",
         "/api/v1/applications",
-        json={"company_id": c.company_id, "product_code": product, "purpose": purpose, "amount": amount, "term_months": term},
+        json={
+            "company_id": c.company_id,
+            "product_code": product,
+            "purpose": purpose,
+            "amount": amount,
+            "term_months": term,
+        },
     )
     if fields:
         app = c.req("PATCH", f"/api/v1/applications/{app['id']}", json=fields)
     for d in docs:
         c.req("POST", f"/api/v1/applications/{app['id']}/documents/demo", params={"doc_type": d})
     ch = c.req("POST", f"/api/v1/applications/{app['id']}/sign-challenges", json={"purpose": "CONSENTS"})
-    c.req("POST", f"/api/v1/applications/{app['id']}/consents", json={"challenge_id": ch["challenge_id"], "code": ch["demo_code"]})
+    c.req(
+        "POST",
+        f"/api/v1/applications/{app['id']}/consents",
+        json={"challenge_id": ch["challenge_id"], "code": ch["demo_code"]},
+    )
     return app
 
 
@@ -73,7 +83,11 @@ def accept_sign_issue(c: Client, app: dict, offer_index: int = 0) -> dict:
     contract = c.req("GET", f"/api/v1/applications/{app['id']}/contract")
     assert contract["schedule"], "в договоре нет графика платежей"
     ch = c.req("POST", f"/api/v1/applications/{app['id']}/sign-challenges", json={"purpose": "CONTRACT"})
-    c.req("POST", f"/api/v1/applications/{app['id']}/sign", json={"challenge_id": ch["challenge_id"], "code": ch["demo_code"]})
+    c.req(
+        "POST",
+        f"/api/v1/applications/{app['id']}/sign",
+        json={"challenge_id": ch["challenge_id"], "code": ch["demo_code"]},
+    )
     final = c.wait(app["id"])
     assert final["status"] == "ISSUED", f"ожидали ISSUED, получили {final['status']}"
     assert final["loan"] and final["loan"]["loan_account"], "нет ссудного счёта"
@@ -134,7 +148,9 @@ def scenario_manual_approve(base: str) -> str:
         f"/api/v1/bank/applications/{app['id']}/decision",
         json={
             "action": "APPROVE",
-            "offers": [{"product_code": rec["product_code"], "amount": rec["amount"], "term_months": rec["term_months"]}],
+            "offers": [
+                {"product_code": rec["product_code"], "amount": rec["amount"], "term_months": rec["term_months"]}
+            ],
             "comment_internal": "Финансовое положение устойчивое, залог ликвидный",
             "message_to_client": "Одобрили инвестиционный кредит. Залог — приобретаемый станок.",
         },
@@ -147,7 +163,15 @@ def scenario_manual_approve(base: str) -> str:
 
 def scenario_manual_risky(base: str) -> str:
     c = Client(base, "nikitin")
-    app = prepare(c, "WORKING_CAPITAL", "CONTRACT", 8_000_000, 18, docs=["CONTRACT_COPY"], purpose_details="Муниципальный контракт")
+    app = prepare(
+        c,
+        "WORKING_CAPITAL",
+        "CONTRACT",
+        8_000_000,
+        18,
+        docs=["CONTRACT_COPY"],
+        purpose_details="Муниципальный контракт",
+    )
     app = submit_and_wait(c, app["id"])
     assert app["status"] == "MANUAL_REVIEW", app["status"]
     analyst = Client(base, "analyst")
@@ -159,7 +183,11 @@ def scenario_manual_risky(base: str) -> str:
         json={
             "action": "REQUEST_INFO",
             "info_items": [
-                {"type": "DOCUMENT", "doc_type": "OTHER", "label": "Справка об отсутствии задолженности по налогам или график её погашения"},
+                {
+                    "type": "DOCUMENT",
+                    "doc_type": "OTHER",
+                    "label": "Справка об отсутствии задолженности по налогам или график её погашения",
+                },
                 {"type": "COMMENT", "label": "Расскажите о причинах смены руководителя"},
             ],
             "message_to_client": "Нужны пара документов, чтобы принять решение",
@@ -168,7 +196,11 @@ def scenario_manual_risky(base: str) -> str:
     app = c.wait(app["id"])
     assert app["status"] == "NEEDS_INFO", app["status"]
     c.req("POST", f"/api/v1/applications/{app['id']}/documents/demo", params={"doc_type": "OTHER"})
-    c.req("POST", f"/api/v1/applications/{app['id']}/info-response", json={"comment": "Прежний директор ушёл на пенсию, долг погасим до конца месяца"})
+    c.req(
+        "POST",
+        f"/api/v1/applications/{app['id']}/info-response",
+        json={"comment": "Прежний директор ушёл на пенсию, долг погасим до конца месяца"},
+    )
     app = c.wait(app["id"])
     assert app["status"] == "MANUAL_REVIEW", app["status"]
     analyst.req(
@@ -220,7 +252,13 @@ def scenario_accountant(base: str) -> str:
     app = c.req(
         "POST",
         "/api/v1/applications",
-        json={"company_id": c.company_id, "product_code": "EXPRESS", "purpose": "OTHER", "amount": 500_000, "term_months": 6},
+        json={
+            "company_id": c.company_id,
+            "product_code": "EXPRESS",
+            "purpose": "OTHER",
+            "amount": 500_000,
+            "term_months": 6,
+        },
     )
     c.req("POST", f"/api/v1/applications/{app['id']}/submit", expect=403)
     c.req("POST", f"/api/v1/applications/{app['id']}/request-signature")

@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.api import applications, auth, bank, client, system
 from app.config import get_settings
@@ -84,6 +85,12 @@ async def observe(request: Request, call_next):
             },
         )
     return response
+
+
+@app.exception_handler(StaleDataError)
+async def stale_data_error(request: Request, exc: StaleDataError):
+    # Оптимистичная блокировка: заявку параллельно изменил другой запрос или воркер
+    return JSONResponse(status_code=409, content={"detail": "Заявка изменилась, обновите страницу"})
 
 
 @app.exception_handler(TransitionError)

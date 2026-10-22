@@ -1,0 +1,2 @@
+# Общие правила линтера для всех Python-модулей репозитория (настройки — в backend/pyproject.toml)
+extend = "backend/pyproject.toml"

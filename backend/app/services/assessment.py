@@ -192,7 +192,9 @@ def match_products(
             fit = "partial"
         if limit and fit_amount > limit:
             notes.append(
-                f"По оборотам на счёте предварительно доступно до {limit:,.0f} ₽ — итог зависит от проверки".replace(",", " ")
+                f"По оборотам на счёте предварительно доступно до {limit:,.0f} ₽ — итог зависит от проверки".replace(
+                    ",", " "
+                )
             )
             fit = "partial"
         docs = required_documents(p, fit_amount, purpose, company.kind)

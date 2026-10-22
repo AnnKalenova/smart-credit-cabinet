@@ -130,7 +130,9 @@ def transition(
         to_status=to_status,
     )
     if AppStatus(to_status) in NOTIFY_STATUSES:
-        notify_company(db, app, f"Заявка № {app.number}: {client_title.lower()}", title or CLIENT_STATUS[AppStatus(to_status)][2])
+        notify_company(
+            db, app, f"Заявка № {app.number}: {client_title.lower()}", title or CLIENT_STATUS[AppStatus(to_status)][2]
+        )
 
 
 def enqueue(

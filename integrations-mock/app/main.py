@@ -27,7 +27,9 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
-DATA_PATH = Path(os.getenv("SYNTHETIC_DATA_PATH", Path(__file__).resolve().parents[2] / "data" / "synthetic" / "companies.json"))
+DATA_PATH = Path(
+    os.getenv("SYNTHETIC_DATA_PATH", Path(__file__).resolve().parents[2] / "data" / "synthetic" / "companies.json")
+)
 LATENCY_MIN_MS = int(os.getenv("MOCK_LATENCY_MIN_MS", "150"))
 LATENCY_MAX_MS = int(os.getenv("MOCK_LATENCY_MAX_MS", "600"))
 SLOW_SECONDS = float(os.getenv("MOCK_SLOW_SECONDS", "8"))
@@ -143,7 +145,15 @@ async def bki(body: BkiRequest):
     c = COMPANIES.get(body.inn)
     report_id = uuid.uuid4().hex[:16]
     if c is None:
-        return {"source": "БКИ (симулятор)", "report_id": report_id, "inn": body.inn, "found": False, "history_length_months": 0, "loans": [], "total_monthly_payment": 0}
+        return {
+            "source": "БКИ (симулятор)",
+            "report_id": report_id,
+            "inn": body.inn,
+            "found": False,
+            "history_length_months": 0,
+            "loans": [],
+            "total_monthly_payment": 0,
+        }
     b = c["bki"]
     loans = [{**ln, "opened": rel_date(ln.get("opened"))} for ln in b["loans"]]
     active = [ln for ln in loans if ln["status"] == "ACTIVE"]
@@ -212,9 +222,7 @@ class FaultIn(BaseModel):
 def _faults_view() -> dict:
     now = time.time()
     return {
-        s: {"mode": f["mode"], "seconds_left": int(f["until"] - now)}
-        for s, f in FAULTS.items()
-        if f["until"] > now
+        s: {"mode": f["mode"], "seconds_left": int(f["until"] - now)} for s, f in FAULTS.items() if f["until"] > now
     }
 
 

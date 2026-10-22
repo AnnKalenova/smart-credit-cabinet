@@ -66,11 +66,22 @@ COMPANIES = [
         "segment": "Малое предприятие",
         "headcount": 28,
         "settlement_account": account("40702", 1001),
-        "turnover": {"base": 4_500_000, "monthly_growth": 0.008, "noise": 0.05, "seed": 101, "months": 12, "debit_ratio": 0.94},
+        "turnover": {
+            "base": 4_500_000,
+            "monthly_growth": 0.008,
+            "noise": 0.05,
+            "seed": 101,
+            "months": 12,
+            "debit_ratio": 0.94,
+        },
         "egrul": {
             "status": "ACTIVE",
             "status_text": "Действующее",
-            "director": {"name": "Смирнов Алексей Викторович", "position": "Генеральный директор", "since": {"months_ago": 103, "day": 14}},
+            "director": {
+                "name": "Смирнов Алексей Викторович",
+                "position": "Генеральный директор",
+                "since": {"months_ago": 103, "day": 14},
+            },
             "founders": [
                 {"name": "Смирнов Алексей Викторович", "share": 70},
                 {"name": "Смирнова Елена Николаевна", "share": 30},
@@ -110,8 +121,20 @@ COMPANIES = [
             ],
         },
         "users": [
-            {"login": "smirnov", "full_name": "Смирнов Алексей Викторович", "position": "DIRECTOR", "can_sign": True, "phone": "+7 900 000-01-01"},
-            {"login": "orlova", "full_name": "Орлова Мария Петровна", "position": "ACCOUNTANT", "can_sign": False, "phone": "+7 900 000-01-02"},
+            {
+                "login": "smirnov",
+                "full_name": "Смирнов Алексей Викторович",
+                "position": "DIRECTOR",
+                "can_sign": True,
+                "phone": "+7 900 000-01-01",
+            },
+            {
+                "login": "orlova",
+                "full_name": "Орлова Мария Петровна",
+                "position": "ACCOUNTANT",
+                "can_sign": False,
+                "phone": "+7 900 000-01-02",
+            },
         ],
         "demo_request": {
             "product_code": "WORKING_CAPITAL",
@@ -137,11 +160,22 @@ COMPANIES = [
         "segment": "Микропредприятие",
         "headcount": 7,
         "settlement_account": account("40802", 2002),
-        "turnover": {"base": 950_000, "monthly_growth": 0.0, "noise": 0.08, "seed": 202, "months": 12, "debit_ratio": 0.97},
+        "turnover": {
+            "base": 950_000,
+            "monthly_growth": 0.0,
+            "noise": 0.08,
+            "seed": 202,
+            "months": 12,
+            "debit_ratio": 0.97,
+        },
         "egrul": {
             "status": "ACTIVE",
             "status_text": "Действующий ИП",
-            "director": {"name": "Кузнецова Анна Сергеевна", "position": "Индивидуальный предприниматель", "since": {"months_ago": 32, "day": 12}},
+            "director": {
+                "name": "Кузнецова Анна Сергеевна",
+                "position": "Индивидуальный предприниматель",
+                "since": {"months_ago": 32, "day": 12},
+            },
             "founders": [],
             "authorized_capital": None,
         },
@@ -198,7 +232,13 @@ COMPANIES = [
             ],
         },
         "users": [
-            {"login": "kuznetsova", "full_name": "Кузнецова Анна Сергеевна", "position": "OWNER", "can_sign": True, "phone": "+7 900 000-02-01"},
+            {
+                "login": "kuznetsova",
+                "full_name": "Кузнецова Анна Сергеевна",
+                "position": "OWNER",
+                "can_sign": True,
+                "phone": "+7 900 000-02-01",
+            },
         ],
         "demo_request": {
             "product_code": "EXPRESS",
@@ -224,11 +264,22 @@ COMPANIES = [
         "segment": "Малое предприятие",
         "headcount": 64,
         "settlement_account": account("40702", 3003),
-        "turnover": {"base": 18_500_000, "monthly_growth": 0.015, "noise": 0.06, "seed": 303, "months": 12, "debit_ratio": 0.95},
+        "turnover": {
+            "base": 18_500_000,
+            "monthly_growth": 0.015,
+            "noise": 0.06,
+            "seed": 303,
+            "months": 12,
+            "debit_ratio": 0.95,
+        },
         "egrul": {
             "status": "ACTIVE",
             "status_text": "Действующее",
-            "director": {"name": "Лебедев Игорь Олегович", "position": "Генеральный директор", "since": {"months_ago": 121, "day": 1}},
+            "director": {
+                "name": "Лебедев Игорь Олегович",
+                "position": "Генеральный директор",
+                "since": {"months_ago": 121, "day": 1},
+            },
             "founders": [
                 {"name": "Лебедев Игорь Олегович", "share": 51},
                 {"name": "Захаров Павел Андреевич", "share": 49},
@@ -268,7 +319,13 @@ COMPANIES = [
             ],
         },
         "users": [
-            {"login": "lebedev", "full_name": "Лебедев Игорь Олегович", "position": "DIRECTOR", "can_sign": True, "phone": "+7 900 000-03-01"},
+            {
+                "login": "lebedev",
+                "full_name": "Лебедев Игорь Олегович",
+                "position": "DIRECTOR",
+                "can_sign": True,
+                "phone": "+7 900 000-03-01",
+            },
         ],
         "demo_request": {
             "product_code": "INVESTMENT",
@@ -295,11 +352,22 @@ COMPANIES = [
         "segment": "Малое предприятие",
         "headcount": 35,
         "settlement_account": account("40702", 4004),
-        "turnover": {"base": 5_200_000, "monthly_growth": 0.0, "noise": 0.22, "seed": 404, "months": 12, "debit_ratio": 0.98},
+        "turnover": {
+            "base": 5_200_000,
+            "monthly_growth": 0.0,
+            "noise": 0.22,
+            "seed": 404,
+            "months": 12,
+            "debit_ratio": 0.98,
+        },
         "egrul": {
             "status": "ACTIVE",
             "status_text": "Действующее",
-            "director": {"name": "Никитин Роман Валерьевич", "position": "Генеральный директор", "since": {"months_ago": 2, "day": 5}},
+            "director": {
+                "name": "Никитин Роман Валерьевич",
+                "position": "Генеральный директор",
+                "since": {"months_ago": 2, "day": 5},
+            },
             "previous_director": {"name": "Гусев Олег Петрович", "until": {"months_ago": 2, "day": 5}},
             "founders": [{"name": "Гусев Олег Петрович", "share": 100}],
             "authorized_capital": 10000,
@@ -347,7 +415,13 @@ COMPANIES = [
             ],
         },
         "users": [
-            {"login": "nikitin", "full_name": "Никитин Роман Валерьевич", "position": "DIRECTOR", "can_sign": True, "phone": "+7 900 000-04-01"},
+            {
+                "login": "nikitin",
+                "full_name": "Никитин Роман Валерьевич",
+                "position": "DIRECTOR",
+                "can_sign": True,
+                "phone": "+7 900 000-04-01",
+            },
         ],
         "demo_request": {
             "product_code": "WORKING_CAPITAL",
@@ -373,12 +447,23 @@ COMPANIES = [
         "segment": "Малое предприятие",
         "headcount": 19,
         "settlement_account": account("40702", 5005),
-        "turnover": {"base": 3_400_000, "monthly_growth": -0.05, "noise": 0.10, "seed": 505, "months": 12, "debit_ratio": 1.02},
+        "turnover": {
+            "base": 3_400_000,
+            "monthly_growth": -0.05,
+            "noise": 0.10,
+            "seed": 505,
+            "months": 12,
+            "debit_ratio": 1.02,
+        },
         "egrul": {
             "status": "LIQUIDATING",
             "status_text": "Находится в стадии ликвидации",
             "status_since": {"months_ago": 1, "day": 10},
-            "director": {"name": "Фёдоров Антон Игоревич", "position": "Ликвидатор", "since": {"months_ago": 1, "day": 10}},
+            "director": {
+                "name": "Фёдоров Антон Игоревич",
+                "position": "Ликвидатор",
+                "since": {"months_ago": 1, "day": 10},
+            },
             "founders": [{"name": "Фёдоров Антон Игоревич", "share": 100}],
             "authorized_capital": 20000,
         },
@@ -404,7 +489,13 @@ COMPANIES = [
             "loans": [],
         },
         "users": [
-            {"login": "fedorov", "full_name": "Фёдоров Антон Игоревич", "position": "DIRECTOR", "can_sign": True, "phone": "+7 900 000-05-01"},
+            {
+                "login": "fedorov",
+                "full_name": "Фёдоров Антон Игоревич",
+                "position": "DIRECTOR",
+                "can_sign": True,
+                "phone": "+7 900 000-05-01",
+            },
         ],
         "demo_request": {
             "product_code": "EXPRESS",
@@ -430,11 +521,22 @@ COMPANIES = [
         "segment": "Микропредприятие",
         "headcount": 5,
         "settlement_account": account("40802", 6006),
-        "turnover": {"base": 560_000, "monthly_growth": 0.03, "noise": 0.04, "seed": 606, "months": 10, "debit_ratio": 0.96},
+        "turnover": {
+            "base": 560_000,
+            "monthly_growth": 0.03,
+            "noise": 0.04,
+            "seed": 606,
+            "months": 10,
+            "debit_ratio": 0.96,
+        },
         "egrul": {
             "status": "ACTIVE",
             "status_text": "Действующий ИП",
-            "director": {"name": "Морозов Дмитрий Игоревич", "position": "Индивидуальный предприниматель", "since": {"months_ago": 11, "day": 18}},
+            "director": {
+                "name": "Морозов Дмитрий Игоревич",
+                "position": "Индивидуальный предприниматель",
+                "since": {"months_ago": 11, "day": 18},
+            },
             "founders": [],
             "authorized_capital": None,
         },
@@ -460,7 +562,13 @@ COMPANIES = [
             "loans": [],
         },
         "users": [
-            {"login": "morozov", "full_name": "Морозов Дмитрий Игоревич", "position": "OWNER", "can_sign": True, "phone": "+7 900 000-06-01"},
+            {
+                "login": "morozov",
+                "full_name": "Морозов Дмитрий Игоревич",
+                "position": "OWNER",
+                "can_sign": True,
+                "phone": "+7 900 000-06-01",
+            },
         ],
         "demo_request": {
             "product_code": "OVERDRAFT",
@@ -474,8 +582,18 @@ COMPANIES = [
 ]
 
 STAFF = [
-    {"login": "analyst", "full_name": "Волкова Ирина Андреевна", "role": "ANALYST", "title": "Кредитный аналитик (андеррайтер)"},
-    {"login": "risk", "full_name": "Белов Сергей Николаевич", "role": "RISK_MANAGER", "title": "Риск-менеджер: параметры политики"},
+    {
+        "login": "analyst",
+        "full_name": "Волкова Ирина Андреевна",
+        "role": "ANALYST",
+        "title": "Кредитный аналитик (андеррайтер)",
+    },
+    {
+        "login": "risk",
+        "full_name": "Белов Сергей Николаевич",
+        "role": "RISK_MANAGER",
+        "title": "Риск-менеджер: параметры политики",
+    },
 ]
 
 

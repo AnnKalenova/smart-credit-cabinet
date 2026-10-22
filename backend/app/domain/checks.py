@@ -40,8 +40,15 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
             Check(
                 "amount_range",
                 "MISSING",
-                f"Сумма должна быть от {float(product.min_amount):,.0f} до {float(product.max_amount):,.0f} ₽".replace(",", " "),
-                {"code": "amount", "type": "FIELD", "field": "amount", "label": "Укажите сумму в пределах условий продукта"},
+                f"Сумма должна быть от {float(product.min_amount):,.0f} до {float(product.max_amount):,.0f} ₽".replace(
+                    ",", " "
+                ),
+                {
+                    "code": "amount",
+                    "type": "FIELD",
+                    "field": "amount",
+                    "label": "Укажите сумму в пределах условий продукта",
+                },
             )
         )
 
@@ -53,7 +60,12 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
                 "term_range",
                 "MISSING",
                 f"Срок должен быть от {product.min_term} до {product.max_term} мес.",
-                {"code": "term", "type": "FIELD", "field": "term_months", "label": "Укажите срок в пределах условий продукта"},
+                {
+                    "code": "term",
+                    "type": "FIELD",
+                    "field": "term_months",
+                    "label": "Укажите срок в пределах условий продукта",
+                },
             )
         )
 
@@ -65,7 +77,12 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
                 "purpose_allowed",
                 "MISSING",
                 "Цель кредита не подходит для выбранного продукта",
-                {"code": "purpose", "type": "FIELD", "field": "purpose", "label": "Выберите подходящую цель или другой продукт"},
+                {
+                    "code": "purpose",
+                    "type": "FIELD",
+                    "field": "purpose",
+                    "label": "Выберите подходящую цель или другой продукт",
+                },
             )
         )
 
@@ -77,7 +94,12 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
                 "revenue_present",
                 "MISSING",
                 "Не указана годовая выручка",
-                {"code": "declared_revenue", "type": "FIELD", "field": "declared_revenue", "label": "Укажите выручку за последние 12 месяцев"},
+                {
+                    "code": "declared_revenue",
+                    "type": "FIELD",
+                    "field": "declared_revenue",
+                    "label": "Укажите выручку за последние 12 месяцев",
+                },
             )
         )
 
@@ -89,7 +111,12 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
                 "contact_present",
                 "MISSING",
                 "Не указано контактное лицо",
-                {"code": "contact", "type": "FIELD", "field": "contact_name", "label": "Укажите контактное лицо и телефон"},
+                {
+                    "code": "contact",
+                    "type": "FIELD",
+                    "field": "contact_name",
+                    "label": "Укажите контактное лицо и телефон",
+                },
             )
         )
 
@@ -123,7 +150,12 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
                     f"doc_{doc_type.lower()}",
                     "MISSING",
                     f"Не приложен документ: {DOC_TYPES[doc_type]}",
-                    {"code": f"doc_{doc_type.lower()}", "type": "DOCUMENT", "doc_type": doc_type, "label": DOC_TYPES[doc_type]},
+                    {
+                        "code": f"doc_{doc_type.lower()}",
+                        "type": "DOCUMENT",
+                        "doc_type": doc_type,
+                        "label": DOC_TYPES[doc_type],
+                    },
                 )
             )
     return checks

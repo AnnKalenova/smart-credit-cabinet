@@ -34,9 +34,7 @@ def _uuid() -> uuid.UUID:
 
 
 class TimestampMixin:
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 # --------------------------------------------------------------------------- пользователи и клиенты
@@ -78,9 +76,7 @@ class Company(TimestampMixin, Base):
     headcount: Mapped[int | None] = mapped_column(Integer)
 
     members: Mapped[list[CompanyMember]] = relationship(back_populates="company")
-    turnovers: Mapped[list[AccountTurnover]] = relationship(
-        back_populates="company", order_by="AccountTurnover.month"
-    )
+    turnovers: Mapped[list[AccountTurnover]] = relationship(back_populates="company", order_by="AccountTurnover.month")
 
 
 class CompanyMember(Base):
@@ -224,9 +220,7 @@ class ApplicationDocument(Base):
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(300), nullable=False)
     uploaded_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    uploaded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     application: Mapped[Application] = relationship(back_populates="documents")
 
@@ -389,9 +383,7 @@ class Loan(TimestampMixin, Base):
     __tablename__ = "loans"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    application_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("applications.id"), unique=True, nullable=False
-    )
+    application_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("applications.id"), unique=True, nullable=False)
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id"), nullable=False)
     product_code: Mapped[str] = mapped_column(ForeignKey("products.code"), nullable=False)
     contract_number: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)

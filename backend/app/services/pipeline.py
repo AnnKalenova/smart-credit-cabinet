@@ -61,7 +61,14 @@ def stage_precheck(db: Session, app: Application, job: PipelineJob) -> None:
     run_id = str(uuid.uuid4())
     for c in results:
         db.add(
-            CheckResult(application_id=app.id, stage="PRECHECK", code=c.code, severity=c.severity, message=c.message, run_id=run_id)
+            CheckResult(
+                application_id=app.id,
+                stage="PRECHECK",
+                code=c.code,
+                severity=c.severity,
+                message=c.message,
+                run_id=run_id,
+            )
         )
     missing = [c for c in results if c.severity in ("MISSING", "STOP")]
     if missing:
@@ -75,7 +82,13 @@ def stage_precheck(db: Session, app: Application, job: PipelineJob) -> None:
             )
         )
         app.info_rounds += 1
-        transition(db, app, AppStatus.NEEDS_INFO, title="Нужно дополнить заявку", payload={"missing": [c.code for c in missing]})
+        transition(
+            db,
+            app,
+            AppStatus.NEEDS_INFO,
+            title="Нужно дополнить заявку",
+            payload={"missing": [c.code for c in missing]},
+        )
         return
     transition(
         db,
@@ -153,7 +166,13 @@ def stage_enrichment(db: Session, app: Application, job: PipelineJob) -> None:
             "settlement_account": app.company.settlement_account,
         },
     )
-    transition(db, app, AppStatus.SCORING, title="Сведения получены, оцениваем заявку", stage_detail="Рассчитываем кредитный рейтинг")
+    transition(
+        db,
+        app,
+        AppStatus.SCORING,
+        title="Сведения получены, оцениваем заявку",
+        stage_detail="Рассчитываем кредитный рейтинг",
+    )
     enqueue(db, app, JobStage.SCORING)
 
 
@@ -217,7 +236,13 @@ def stage_scoring(db: Session, app: Application, job: PipelineJob) -> None:
         payload={"score": outcome.score, "grade": outcome.grade},
         client_visible=False,
     )
-    transition(db, app, AppStatus.DECISION, title="Рейтинг рассчитан, подбираем условия", stage_detail="Подбираем сумму, срок и ставку")
+    transition(
+        db,
+        app,
+        AppStatus.DECISION,
+        title="Рейтинг рассчитан, подбираем условия",
+        stage_detail="Подбираем сумму, срок и ставку",
+    )
     enqueue(db, app, JobStage.DECISION)
 
 
@@ -268,7 +293,11 @@ def apply_policy_result(db: Session, app: Application, result: PolicyResult) -> 
     if result.outcome in (DecisionOutcome.APPROVE, DecisionOutcome.COUNTER_OFFER):
         create_offers(db, app, decision, result.offers)
         app.decided_at = utcnow()
-        title = "Заявка одобрена — готово предложение" if result.outcome == DecisionOutcome.APPROVE else "Готово встречное предложение"
+        title = (
+            "Заявка одобрена — готово предложение"
+            if result.outcome == DecisionOutcome.APPROVE
+            else "Готово встречное предложение"
+        )
         transition(db, app, AppStatus.OFFER_READY, title=title, payload={"decision": label})
     elif result.outcome == DecisionOutcome.NEEDS_INFO:
         db.add(
@@ -364,7 +393,13 @@ def stage_disbursement(db: Session, app: Application, job: PipelineJob) -> None:
         if offer.product.repayment_type == "REVOLVING"
         else f"{amount} ₽ зачислены на счёт {app.company.settlement_account}"
     )
-    transition(db, app, AppStatus.ISSUED, title=title, payload={"loan_account": res["loan_account"], "operation_id": res.get("operation_id")})
+    transition(
+        db,
+        app,
+        AppStatus.ISSUED,
+        title=title,
+        payload={"loan_account": res["loan_account"], "operation_id": res.get("operation_id")},
+    )
 
 
 HANDLERS = {
@@ -386,7 +421,9 @@ def expire_offers(db: Session) -> int:
     expired = 0
     apps = db.scalars(select(Application).where(Application.status == AppStatus.OFFER_READY))
     for app in apps:
-        offers = list(db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE)))
+        offers = list(
+            db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE))
+        )
         if offers and all(o.valid_until < now for o in offers):
             for o in offers:
                 o.status = OfferStatus.EXPIRED

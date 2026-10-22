@@ -53,9 +53,7 @@ def turnover_stats(rows: list[tuple[date, float, float]]) -> TurnoverStats:
         trend = last3 / prev - 1 if prev > 0 else 0.0
     else:
         trend = 0.0
-    series = [
-        {"month": m.strftime("%Y-%m"), "credit": round(c, 2), "debit": round(d, 2)} for m, c, d in rows
-    ]
+    series = [{"month": m.strftime("%Y-%m"), "credit": round(c, 2), "debit": round(d, 2)} for m, c, d in rows]
     return TurnoverStats(len(credits), avg, cv, trend, series)
 
 
@@ -161,9 +159,7 @@ def score(inp: ScoringInput) -> ScoringOutcome:
         pts, txt = 5, "Поступления колеблются умеренно"
     else:
         pts, txt = -20, "Поступления на счёт сильно колеблются"
-    factors.append(
-        Factor("turnover_stability", "Стабильность поступлений", f"вариация {_pct(cv)}", pts, txt, txt)
-    )
+    factors.append(Factor("turnover_stability", "Стабильность поступлений", f"вариация {_pct(cv)}", pts, txt, txt))
 
     # 4. Динамика оборотов
     tr = inp.turnover.trend
@@ -173,7 +169,7 @@ def score(inp: ScoringInput) -> ScoringOutcome:
         pts, txt = 0, "Обороты в последние месяцы без существенных изменений"
     else:
         pts, txt = -35, "Обороты за последние 3 месяца заметно снизились"
-    factors.append(Factor("turnover_trend", "Динамика оборотов", f"{tr * 100:+.0f}%", pts, txt, txt))
+    factors.append(Factor("turnover_trend", "Динамика оборотов", f"{tr * 100:+.0f}%".replace("-", "−"), pts, txt, txt))
 
     # 5. Долговая нагрузка (все платежи по кредитам / месячные поступления)
     existing = float(inp.bki.get("total_monthly_payment", 0) or 0)
@@ -261,7 +257,7 @@ def score(inp: ScoringInput) -> ScoringOutcome:
             pts, txt = 5, "Бизнес прибыльный"
         else:
             pts, txt = -35, "По итогам года бизнес убыточен"
-        value = f"{margin * 100:.1f}%"
+        value = f"{margin * 100:.1f}%".replace(".", ",")
     else:
         pts, txt, value = 0, "Нет публичной отчётности (ИП) — оценка по оборотам", "—"
     factors.append(Factor("profitability", "Рентабельность по чистой прибыли", value, pts, txt, txt if pts else ""))

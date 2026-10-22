@@ -73,7 +73,12 @@ def process_job(job_id: int) -> None:
             db.commit()
             log.info(
                 "этап выполнен",
-                extra={"job_id": job.id, "stage": job.stage, "application": app.number, "ms": int((time.perf_counter() - started) * 1000)},
+                extra={
+                    "job_id": job.id,
+                    "stage": job.stage,
+                    "application": app.number,
+                    "ms": int((time.perf_counter() - started) * 1000),
+                },
             )
         except Exception as e:  # noqa: BLE001 — любая ошибка этапа обрабатывается одинаково
             db.rollback()
@@ -97,13 +102,21 @@ def _on_error(db: Session, job_id: int, error: Exception) -> None:
             )
         log.warning(
             "ошибка этапа, повтор",
-            extra={"job_id": job.id, "stage": job.stage, "application": app.number, "error": str(error), "retry_in": delay},
+            extra={
+                "job_id": job.id,
+                "stage": job.stage,
+                "application": app.number,
+                "error": str(error),
+                "retry_in": delay,
+            },
         )
         db.commit()
         return
     job.status = JobStatus.FAILED
     job.finished_at = utcnow()
-    log.error("этап не выполнен", extra={"job_id": job.id, "stage": job.stage, "application": app.number, "error": str(error)})
+    log.error(
+        "этап не выполнен", extra={"job_id": job.id, "stage": job.stage, "application": app.number, "error": str(error)}
+    )
     handler = FAILURE_HANDLERS.get(job.stage)
     if handler:
         handler(db, app, error)

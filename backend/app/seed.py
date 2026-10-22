@@ -114,10 +114,18 @@ except FileNotFoundError:  # pragma: no cover — например, при ге�
 def sync_products(db: Session) -> None:
     for spec in PRODUCTS_SEED:
         p = db.get(Product, spec["code"])
-        values = {**spec, "purposes": [str(x) for x in spec["purposes"]], "doc_rules": [
-            {**r, "doc_type": str(r["doc_type"]), **({"value": str(r["value"])} if r.get("when") == "purpose" else {})}
-            for r in spec["doc_rules"]
-        ]}
+        values = {
+            **spec,
+            "purposes": [str(x) for x in spec["purposes"]],
+            "doc_rules": [
+                {
+                    **r,
+                    "doc_type": str(r["doc_type"]),
+                    **({"value": str(r["value"])} if r.get("when") == "purpose" else {}),
+                }
+                for r in spec["doc_rules"]
+            ],
+        }
         if p is None:
             db.add(Product(**values))
         else:
@@ -178,9 +186,19 @@ def seed(db: Session) -> bool:
             )
             db.add(user)
             db.flush()
-            db.add(CompanyMember(company_id=company.id, user_id=user.id, position=u["position"], can_sign=u["can_sign"]))
+            db.add(
+                CompanyMember(company_id=company.id, user_id=user.id, position=u["position"], can_sign=u["can_sign"])
+            )
     for s in data["staff"]:
-        db.add(User(login=s["login"], password_hash=pwd_hash, full_name=s["full_name"], role=s["role"], position_title=s["title"]))
+        db.add(
+            User(
+                login=s["login"],
+                password_hash=pwd_hash,
+                full_name=s["full_name"],
+                role=s["role"],
+                position_title=s["title"],
+            )
+        )
     db.commit()
     log.info("демо-данные загружены", extra={"companies": len(data["companies"])})
     return True

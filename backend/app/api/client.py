@@ -28,7 +28,9 @@ settings = get_settings()
 client_only = require_roles(Role.CLIENT)
 
 
-@router.get("/dictionaries", response_model=DictionariesOut, summary="Справочники: цели, документы, статусы, ключевая ставка")
+@router.get(
+    "/dictionaries", response_model=DictionariesOut, summary="Справочники: цели, документы, статусы, ключевая ставка"
+)
 def dictionaries(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return {
         "purposes": [{"code": k, **v} for k, v in PURPOSES.items()],
@@ -44,22 +46,48 @@ def dictionaries(db: Session = Depends(get_db), user: User = Depends(get_current
 
 @router.get("/products", response_model=list[ProductOut], summary="Каталог кредитных продуктов")
 def products(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return [product_out(p) for p in db.scalars(select(Product).where(Product.is_active.is_(True)).order_by(Product.sort_order))]
+    return [
+        product_out(p)
+        for p in db.scalars(select(Product).where(Product.is_active.is_(True)).order_by(Product.sort_order))
+    ]
 
 
-@router.get("/companies/{company_id}", response_model=CompanyProfileOut, summary="Профиль компании: данные, обороты, предодобренный лимит")
+@router.get(
+    "/companies/{company_id}",
+    response_model=CompanyProfileOut,
+    summary="Профиль компании: данные, обороты, предодобренный лимит",
+)
 def company_profile(company_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
     require_company_member(db, user, company_id)
     company = db.get(Company, company_id)
     stats = assessment.company_turnover(db, company.id)
     members = db.scalars(select(CompanyMember).where(CompanyMember.company_id == company.id))
     return {
-        **{c: getattr(company, c) for c in (
-            "id", "inn", "ogrn", "kind", "short_name", "full_name", "okved_code", "okved_name",
-            "registration_date", "legal_address", "client_since", "segment", "settlement_account", "headcount",
-        )},
+        **{
+            c: getattr(company, c)
+            for c in (
+                "id",
+                "inn",
+                "ogrn",
+                "kind",
+                "short_name",
+                "full_name",
+                "okved_code",
+                "okved_name",
+                "registration_date",
+                "legal_address",
+                "client_since",
+                "segment",
+                "settlement_account",
+                "headcount",
+            )
+        },
         "members": [
-            {"full_name": m.user.full_name, "position_label": POSITION_LABELS.get(m.position, m.position), "can_sign": m.can_sign}
+            {
+                "full_name": m.user.full_name,
+                "position_label": POSITION_LABELS.get(m.position, m.position),
+                "can_sign": m.can_sign,
+            }
             for m in members
         ],
         "turnover": {
@@ -78,12 +106,14 @@ def company_profile(company_id: uuid.UUID, db: Session = Depends(get_db), user: 
 def match(body: MatchIn, db: Session = Depends(get_db), user: User = Depends(client_only)):
     require_company_member(db, user, body.company_id)
     if body.purpose not in PURPOSES:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Неизвестная цель кредита")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Неизвестная цель кредита")
     company = db.get(Company, body.company_id)
     kr = key_rate(db)
     return {
         "key_rate": kr,
-        "results": assessment.match_products(db, company, body.purpose, body.amount, body.term_months, kr, as_of_today()),
+        "results": assessment.match_products(
+            db, company, body.purpose, body.amount, body.term_months, kr, as_of_today()
+        ),
     }
 
 
@@ -106,7 +136,12 @@ def loan_detail(loan_id: uuid.UUID, db: Session = Depends(get_db), user: User = 
 @router.get("/notifications", response_model=NotificationsOut, summary="Уведомления в кабинете")
 def notifications(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     items = list(
-        db.scalars(select(Notification).where(Notification.user_id == user.id).order_by(Notification.created_at.desc()).limit(30))
+        db.scalars(
+            select(Notification)
+            .where(Notification.user_id == user.id)
+            .order_by(Notification.created_at.desc())
+            .limit(30)
+        )
     )
     unread = sum(1 for n in items if not n.is_read)
     return {"unread": unread, "items": items}

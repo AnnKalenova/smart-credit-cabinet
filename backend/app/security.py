@@ -67,7 +67,9 @@ def get_current_user(
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется вход в систему")
     try:
-        payload = jwt.decode(creds.credentials, settings.jwt_secret, algorithms=["HS256"], issuer="smart-credit-cabinet")
+        payload = jwt.decode(
+            creds.credentials, settings.jwt_secret, algorithms=["HS256"], issuer="smart-credit-cabinet"
+        )
     except jwt.PyJWTError as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Сессия истекла, войдите снова") from e
     user = db.get(User, uuid.UUID(payload["sub"]))

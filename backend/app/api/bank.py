@@ -25,8 +25,8 @@ from app.domain.policy import POLICY_VERSION, ProductParams, _conditions, _offer
 from app.domain.scoring import months_between
 from app.integrations.client import ExternalSystems, IntegrationError
 from app.models import Application, ApplicationDocument, Company, Decision, InfoRequest, Message, Product, Setting, User
-from app.security import require_roles
 from app.schemas import BankApplicationRow, BankDecisionIn, FaultIn, MessageIn, MessageOut, SettingIn, SettingOut
+from app.security import require_roles
 from app.services import storage
 from app.services.pipeline import create_offers
 from app.services.views import bank_application_out, bank_row, dashboard, latest_scoring, message_out
@@ -74,7 +74,9 @@ def list_applications(
         query = query.where(Application.product_code == product)
     if q:
         like = f"%{q.strip()}%"
-        query = query.where(or_(Application.number.ilike(like), Company.short_name.ilike(like), Company.inn.ilike(like)))
+        query = query.where(
+            or_(Application.number.ilike(like), Company.short_name.ilike(like), Company.inn.ilike(like))
+        )
     if scope == "queue":
         query = query.order_by(Application.review_due_at.asc().nulls_last())
     else:
@@ -115,12 +117,22 @@ def get_application(app_id: uuid.UUID, db: Session = Depends(get_db), user: User
 def assign(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(staff)):
     app = _get_app(db, app_id)
     app.assignee_id = user.id
-    add_event(db, app, "ASSIGNED", f"Заявку взял в работу: {user.full_name}", actor_type=ActorType.ANALYST, actor_id=user.id, client_visible=False)
+    add_event(
+        db,
+        app,
+        "ASSIGNED",
+        f"Заявку взял в работу: {user.full_name}",
+        actor_type=ActorType.ANALYST,
+        actor_id=user.id,
+        client_visible=False,
+    )
     _commit(db)
     return {"ok": True}
 
 
-@router.post("/applications/{app_id}/rerun", summary="Повторить автоматическую проверку (например, после сбоя внешнего сервиса)")
+@router.post(
+    "/applications/{app_id}/rerun", summary="Повторить автоматическую проверку (например, после сбоя внешнего сервиса)"
+)
 def rerun(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(staff)):
     app = _get_app(db, app_id)
     if app.status != AppStatus.MANUAL_REVIEW:
@@ -153,35 +165,42 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
 
     if body.action == "APPROVE":
         if not body.offers:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Укажите условия предложения")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Укажите условия предложения")
         drafts = []
         for o in body.offers:
             product = db.get(Product, o.product_code)
             if product is None or not product.is_active:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Продукт {o.product_code} не найден")
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Продукт {o.product_code} не найден")
             params = ProductParams.from_orm(product)
             if not params.min_amount <= o.amount <= params.max_amount:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Сумма вне условий продукта «{params.name}»")
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT, f"Сумма вне условий продукта «{params.name}»"
+                )
             if not params.min_term <= o.term_months <= params.max_term:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Срок вне условий продукта «{params.name}»")
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Срок вне условий продукта «{params.name}»")
             default_rate, pricing = price(params, grade, kr, app.has_collateral, app.owner_guarantee, tenure)
             rate = round(o.rate, 1) if o.rate else default_rate
             if not kr + 1.0 - 1e-9 <= rate <= kr + params.max_spread + 1e-9:
                 raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
                     f"Ставка должна быть от {kr + 1.0:.1f}% до {kr + params.max_spread:.1f}%",
                 )
             if rate != default_rate:
-                pricing = [*pricing, {"label": "Корректировка кредитного специалиста", "value": round(rate - default_rate, 2)}]
-            same = o.product_code == app.product_code and abs(o.amount - float(app.amount)) < 1 and o.term_months == app.term_months
+                pricing = [
+                    *pricing,
+                    {"label": "Корректировка кредитного специалиста", "value": round(rate - default_rate, 2)},
+                ]
+            same = (
+                o.product_code == app.product_code
+                and abs(o.amount - float(app.amount)) < 1
+                and o.term_months == app.term_months
+            )
             label = o.label or ("Запрошенные условия" if same else "Условия, согласованные специалистом")
             draft = _offer(params, o.amount, o.term_months, rate, pricing, app.owner_guarantee, not same, label)
             draft.conditions = _conditions(params, o.amount, app.owner_guarantee)
             drafts.append(draft)
         outcome = (
-            DecisionOutcome.APPROVE
-            if len(drafts) == 1 and not drafts[0].is_counter
-            else DecisionOutcome.COUNTER_OFFER
+            DecisionOutcome.APPROVE if len(drafts) == 1 and not drafts[0].is_counter else DecisionOutcome.COUNTER_OFFER
         )
         decision = Decision(
             id=uuid.uuid4(),
@@ -206,27 +225,44 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
         db.flush()
         create_offers(db, app, decision, drafts)
         app.decided_at = utcnow()
-        title = "Специалист одобрил заявку — готово предложение" if outcome == DecisionOutcome.APPROVE else "Специалист подготовил предложение"
+        title = (
+            "Специалист одобрил заявку — готово предложение"
+            if outcome == DecisionOutcome.APPROVE
+            else "Специалист подготовил предложение"
+        )
         transition(db, app, AppStatus.OFFER_READY, actor_type=ActorType.ANALYST, actor_id=user.id, title=title)
 
     elif body.action == "REQUEST_INFO":
         if not body.info_items:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Укажите, что нужно предоставить")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Укажите, что нужно предоставить")
         items = []
         for i, item in enumerate(body.info_items):
             if item.type == "DOCUMENT" and item.doc_type not in DOC_TYPES:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Неизвестный тип документа")
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Неизвестный тип документа")
             items.append({"code": f"analyst_{i}", "type": item.type, "doc_type": item.doc_type, "label": item.label})
         message = body.message_to_client or "Кредитному специалисту нужна дополнительная информация по заявке."
         db.add(
-            InfoRequest(application_id=app.id, requested_by_id=user.id, items=items, message=message, status=InfoRequestStatus.OPEN)
+            InfoRequest(
+                application_id=app.id,
+                requested_by_id=user.id,
+                items=items,
+                message=message,
+                status=InfoRequestStatus.OPEN,
+            )
         )
         db.add(
             Decision(
                 application_id=app.id,
                 kind=DecisionKind.MANUAL,
                 outcome=DecisionOutcome.NEEDS_INFO,
-                reasons=[{"code": "manual_info", "kind": "INFO", "text": body.comment_internal or "Запрошена информация", "client_text": message}],
+                reasons=[
+                    {
+                        "code": "manual_info",
+                        "kind": "INFO",
+                        "text": body.comment_internal or "Запрошена информация",
+                        "client_text": message,
+                    }
+                ],
                 details={"items": items},
                 policy_version=POLICY_VERSION,
                 decided_by_id=user.id,
@@ -234,11 +270,18 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
                 message_to_client=message,
             )
         )
-        transition(db, app, AppStatus.NEEDS_INFO, actor_type=ActorType.ANALYST, actor_id=user.id, title="Специалист запросил дополнительную информацию")
+        transition(
+            db,
+            app,
+            AppStatus.NEEDS_INFO,
+            actor_type=ActorType.ANALYST,
+            actor_id=user.id,
+            title="Специалист запросил дополнительную информацию",
+        )
 
     else:  # DECLINE
         if not (body.reason or "").strip():
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Укажите причину отказа")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Укажите причину отказа")
         client_text = body.message_to_client or body.reason
         db.add(
             Decision(
@@ -254,7 +297,9 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
             )
         )
         app.decided_at = utcnow()
-        transition(db, app, AppStatus.DECLINED, actor_type=ActorType.ANALYST, actor_id=user.id, title=f"Отказ: {client_text}")
+        transition(
+            db, app, AppStatus.DECLINED, actor_type=ActorType.ANALYST, actor_id=user.id, title=f"Отказ: {client_text}"
+        )
 
     if body.message_to_client:
         db.add(Message(application_id=app.id, author_id=user.id, author_role=Role.ANALYST, text=body.message_to_client))
@@ -274,7 +319,9 @@ def download_document(app_id: uuid.UUID, doc_id: uuid.UUID, db: Session = Depend
 @router.get("/applications/{app_id}/messages", response_model=list[MessageOut], summary="Переписка с клиентом")
 def get_messages(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(staff)):
     app = _get_app(db, app_id)
-    return [message_out(m) for m in db.scalars(select(Message).where(Message.application_id == app.id).order_by(Message.id))]
+    return [
+        message_out(m) for m in db.scalars(select(Message).where(Message.application_id == app.id).order_by(Message.id))
+    ]
 
 
 @router.post("/applications/{app_id}/messages", response_model=MessageOut, status_code=201, summary="Написать клиенту")
@@ -318,9 +365,9 @@ def put_setting(key: str, body: SettingIn, db: Session = Depends(get_db), user: 
         try:
             value = round(float(body.value), 2)
         except (TypeError, ValueError) as e:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Ставка должна быть числом") from e
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Ставка должна быть числом") from e
         if not 0 < value < 50:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Ставка должна быть от 0 до 50%")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Ставка должна быть от 0 до 50%")
     else:
         value = str(body.value)[:300]
     row = db.get(Setting, key)
@@ -331,7 +378,13 @@ def put_setting(key: str, body: SettingIn, db: Session = Depends(get_db), user: 
     row.updated_by = user.full_name
     db.commit()
     db.refresh(row)
-    return {"key": key, "value": row.value, "description": row.description, "updated_at": row.updated_at, "updated_by": row.updated_by}
+    return {
+        "key": key,
+        "value": row.value,
+        "description": row.description,
+        "updated_at": row.updated_at,
+        "updated_by": row.updated_by,
+    }
 
 
 @router.get("/integrations/faults", summary="Состояние симулятора внешних систем")

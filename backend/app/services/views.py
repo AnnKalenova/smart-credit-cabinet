@@ -181,7 +181,9 @@ def latest_decision(db: Session, app_id) -> Decision | None:
 
 
 def latest_scoring(db: Session, app_id) -> ScoringResult | None:
-    return db.scalar(select(ScoringResult).where(ScoringResult.application_id == app_id).order_by(ScoringResult.id.desc()))
+    return db.scalar(
+        select(ScoringResult).where(ScoringResult.application_id == app_id).order_by(ScoringResult.id.desc())
+    )
 
 
 def visible_offers(db: Session, app: Application) -> list[Offer]:
@@ -198,7 +200,9 @@ def visible_offers(db: Session, app: Application) -> list[Offer]:
         return []
     return list(
         db.scalars(
-            select(Offer).where(Offer.application_id == app.id, Offer.status.in_(wanted)).order_by(Offer.is_counter, Offer.amount.desc())
+            select(Offer)
+            .where(Offer.application_id == app.id, Offer.status.in_(wanted))
+            .order_by(Offer.is_counter, Offer.amount.desc())
         )
     )
 
@@ -218,7 +222,9 @@ def client_decision_view(db: Session, app: Application) -> dict | None:
     d = latest_decision(db, app.id)
     if d is None:
         return None
-    reasons = [r["client_text"] for r in d.reasons if r.get("client_text") and r.get("kind") in ("STOP", "LIMIT", "INFO")]
+    reasons = [
+        r["client_text"] for r in d.reasons if r.get("client_text") and r.get("kind") in ("STOP", "LIMIT", "INFO")
+    ]
     scoring = latest_scoring(db, app.id)
     positives, negatives = [], []
     if scoring:
@@ -265,7 +271,12 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
         for t in required_documents(product, float(app.amount), app.purpose, app.company.kind)
     ]
     consents = [
-        {"type": c.consent_type, "text": c.text, "signed_at": c.signed_at, "signed_by": db.get(User, c.signed_by_id).full_name}
+        {
+            "type": c.consent_type,
+            "text": c.text,
+            "signed_at": c.signed_at,
+            "signed_by": db.get(User, c.signed_by_id).full_name,
+        }
         for c in db.scalars(select(Consent).where(Consent.application_id == app.id).order_by(Consent.signed_at))
     ]
     info = db.scalar(
@@ -279,7 +290,9 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
     loan = db.scalar(select(Loan).where(Loan.application_id == app.id))
     signers = [
         m.user.full_name
-        for m in db.scalars(select(CompanyMember).where(CompanyMember.company_id == app.company_id, CompanyMember.can_sign.is_(True)))
+        for m in db.scalars(
+            select(CompanyMember).where(CompanyMember.company_id == app.company_id, CompanyMember.can_sign.is_(True))
+        )
     ]
     data = summary_out(app)
     data["status_view"] = client_status_view(app, offers)
@@ -296,7 +309,9 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
             "required_documents": req,
             "documents": [document_out(d) for d in app.documents],
             "consents": consents,
-            "info_request": info_request_out(info, db) if info and (info.status == InfoRequestStatus.OPEN or app.status != AppStatus.DRAFT) else None,
+            "info_request": info_request_out(info, db)
+            if info and (info.status == InfoRequestStatus.OPEN or app.status != AppStatus.DRAFT)
+            else None,
             "offers": [offer_out(o) for o in offers],
             "decision": client_decision_view(db, app),
             "events": [event_out(e) for e in events],
@@ -310,7 +325,8 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
                 "can_cancel": app.status in CLIENT_CANCELLABLE,
                 "can_answer": app.status == AppStatus.NEEDS_INFO,
                 "can_accept": app.status == AppStatus.OFFER_READY,
-                "can_reapply": app.status in (AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED),
+                "can_reapply": app.status
+                in (AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED),
                 "signers": signers,
                 "position_label": POSITION_LABELS.get(member.position, member.position),
             },
@@ -359,7 +375,10 @@ def bank_row(db: Session, app: Application) -> dict:
 def bank_application_out(db: Session, app: Application) -> dict:
     company: Company = app.company
     members = db.scalars(select(CompanyMember).where(CompanyMember.company_id == company.id))
-    sources = {r.source: {"payload": r.payload, "fetched_at": r.fetched_at} for r in db.scalars(select(EnrichmentResult).where(EnrichmentResult.application_id == app.id))}
+    sources = {
+        r.source: {"payload": r.payload, "fetched_at": r.fetched_at}
+        for r in db.scalars(select(EnrichmentResult).where(EnrichmentResult.application_id == app.id))
+    }
     scoring = latest_scoring(db, app.id)
     last_run = db.scalar(
         select(CheckResult.run_id).where(CheckResult.application_id == app.id).order_by(CheckResult.id.desc()).limit(1)
@@ -386,7 +405,9 @@ def bank_application_out(db: Session, app: Application) -> dict:
             "message_to_client": d.message_to_client,
             "policy_version": d.policy_version,
         }
-        for d in db.scalars(select(Decision).where(Decision.application_id == app.id).order_by(Decision.created_at.desc()))
+        for d in db.scalars(
+            select(Decision).where(Decision.application_id == app.id).order_by(Decision.created_at.desc())
+        )
     ]
     offers = [
         offer_out(o)
@@ -394,12 +415,16 @@ def bank_application_out(db: Session, app: Application) -> dict:
     ]
     info_requests = [
         info_request_out(r, db)
-        for r in db.scalars(select(InfoRequest).where(InfoRequest.application_id == app.id).order_by(InfoRequest.created_at.desc()))
+        for r in db.scalars(
+            select(InfoRequest).where(InfoRequest.application_id == app.id).order_by(InfoRequest.created_at.desc())
+        )
     ]
     events = [
         {**event_out(e), "client_visible": e.client_visible}
         for e in db.scalars(
-            select(ApplicationEvent).where(ApplicationEvent.application_id == app.id).order_by(ApplicationEvent.created_at, ApplicationEvent.id)
+            select(ApplicationEvent)
+            .where(ApplicationEvent.application_id == app.id)
+            .order_by(ApplicationEvent.created_at, ApplicationEvent.id)
         )
     ]
     calls = [
@@ -414,7 +439,10 @@ def bank_application_out(db: Session, app: Application) -> dict:
             "error": c.error,
         }
         for c in db.scalars(
-            select(IntegrationCall).where(IntegrationCall.application_id == app.id).order_by(IntegrationCall.id.desc()).limit(40)
+            select(IntegrationCall)
+            .where(IntegrationCall.application_id == app.id)
+            .order_by(IntegrationCall.id.desc())
+            .limit(40)
         )
     ]
     loan = db.scalar(select(Loan).where(Loan.application_id == app.id))
@@ -451,7 +479,11 @@ def bank_application_out(db: Session, app: Application) -> dict:
             "settlement_account": company.settlement_account,
             "headcount": company.headcount,
             "members": [
-                {"full_name": m.user.full_name, "position_label": POSITION_LABELS.get(m.position, m.position), "can_sign": m.can_sign}
+                {
+                    "full_name": m.user.full_name,
+                    "position_label": POSITION_LABELS.get(m.position, m.position),
+                    "can_sign": m.can_sign,
+                }
                 for m in members
             ],
         },
@@ -501,16 +533,23 @@ def dashboard(db: Session) -> dict:
     by_status = dict(db.execute(select(Application.status, func.count()).group_by(Application.status)).all())
     total = sum(by_status.values())
     submitted = db.scalar(select(func.count()).where(Application.submitted_at.is_not(None))) or 0
-    reached_offer = db.scalar(
-        select(func.count(func.distinct(ApplicationEvent.application_id))).where(ApplicationEvent.to_status == AppStatus.OFFER_READY)
-    ) or 0
+    reached_offer = (
+        db.scalar(
+            select(func.count(func.distinct(ApplicationEvent.application_id))).where(
+                ApplicationEvent.to_status == AppStatus.OFFER_READY
+            )
+        )
+        or 0
+    )
     issued = by_status.get(AppStatus.ISSUED, 0)
     declined = by_status.get(AppStatus.DECLINED, 0)
 
     final_decisions = list(
         db.execute(
             select(Decision.kind, func.count())
-            .where(Decision.outcome.in_([DecisionOutcome.APPROVE, DecisionOutcome.COUNTER_OFFER, DecisionOutcome.DECLINE]))
+            .where(
+                Decision.outcome.in_([DecisionOutcome.APPROVE, DecisionOutcome.COUNTER_OFFER, DecisionOutcome.DECLINE])
+            )
             .group_by(Decision.kind)
         ).all()
     )
@@ -520,14 +559,19 @@ def dashboard(db: Session) -> dict:
 
     def avg_minutes(col_end, col_start) -> float | None:
         v = db.scalar(
-            select(func.avg(func.extract("epoch", col_end - col_start))).where(col_end.is_not(None), col_start.is_not(None))
+            select(func.avg(func.extract("epoch", col_end - col_start))).where(
+                col_end.is_not(None), col_start.is_not(None)
+            )
         )
         return round(float(v) / 60, 1) if v is not None else None
 
     manual_queue = by_status.get(AppStatus.MANUAL_REVIEW, 0)
-    overdue = db.scalar(
-        select(func.count()).where(Application.status == AppStatus.MANUAL_REVIEW, Application.review_due_at < now)
-    ) or 0
+    overdue = (
+        db.scalar(
+            select(func.count()).where(Application.status == AppStatus.MANUAL_REVIEW, Application.review_due_at < now)
+        )
+        or 0
+    )
     issued_amount = db.scalar(select(func.coalesce(func.sum(Loan.amount), 0))) or 0
     by_product = [
         {"product_code": code, "count": cnt, "amount": float(amt or 0)}
@@ -557,7 +601,7 @@ def dashboard(db: Session) -> dict:
         ).all()
     ]
     recent = [
-        {**event_out(e), "application_number": num}
+        {**event_out(e), "application_number": num, "application_id": e.application_id}
         for e, num in db.execute(
             select(ApplicationEvent, Application.number)
             .join(Application, Application.id == ApplicationEvent.application_id)
@@ -569,7 +613,9 @@ def dashboard(db: Session) -> dict:
     return {
         "generated_at": now,
         "total": total,
-        "by_status": [{"status": s, "label": BANK_LABELS[AppStatus(s)], "count": c} for s, c in sorted(by_status.items())],
+        "by_status": [
+            {"status": s, "label": BANK_LABELS[AppStatus(s)], "count": c} for s, c in sorted(by_status.items())
+        ],
         "funnel": [
             {"stage": "Подано заявок", "count": submitted},
             {"stage": "Получили предложение", "count": reached_offer},

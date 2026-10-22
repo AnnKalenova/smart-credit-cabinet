@@ -234,6 +234,11 @@ def _offer(
     )
 
 
+def _rub(v: float) -> str:
+    """12345678 → «12 345 678 ₽» (неразрывные пробелы между разрядами)."""
+    return f"{v:,.0f}".replace(",", "\u00a0") + "\u00a0₽"
+
+
 # --------------------------------------------------------------------------- правила
 
 
@@ -295,9 +300,9 @@ def info_checks(inp: PolicyInput) -> list[dict]:
                     "doc_type": "BANK_STATEMENT",
                     "label": "Выписка по счёту в другом банке за последние 6–12 месяцев",
                     "why": (
-                        f"Указанная выручка {inp.declared_revenue:,.0f} ₽ в год в {ratio:.1f} раза больше "
-                        f"поступлений на ваш счёт в нашем банке ({annual:,.0f} ₽ за 12 месяцев)"
-                    ).replace(",", " "),
+                        f"Указанная выручка {_rub(inp.declared_revenue)} в год в {ratio:.1f}".replace(".", ",")
+                        + f" раза больше поступлений на ваш счёт в нашем банке ({_rub(annual)} за 12 месяцев)"
+                    ),
                 }
             )
             items.append(
@@ -330,9 +335,7 @@ def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info:
             break
     else:
         if not offers and top_amount > inp.product.auto_decision_limit:
-            reasons.append(
-                Reason("above_auto_limit", "MANUAL", "Сумма выше лимита автоматического решения", "")
-            )
+            reasons.append(Reason("above_auto_limit", "MANUAL", "Сумма выше лимита автоматического решения", ""))
     if inp.scoring.grade == "D":
         reasons.append(
             Reason(
@@ -370,9 +373,7 @@ def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info:
         )
     director_since = inp.egrul.get("director", {}).get("since")
     if director_since and months_between(date.fromisoformat(director_since), inp.as_of) < 6:
-        reasons.append(
-            Reason("director_changed", "MANUAL", f"Смена руководителя {director_since}", "")
-        )
+        reasons.append(Reason("director_changed", "MANUAL", f"Смена руководителя {director_since}", ""))
     if unresolved_info:
         reasons.append(
             Reason(
@@ -436,13 +437,19 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
     requested_fits = inp.amount <= limit
 
     if requested_fits:
-        offers.append(_offer(product, inp.amount, inp.term_months, rate, pricing, inp.owner_guarantee, False, "Запрошенные условия"))
+        offers.append(
+            _offer(
+                product, inp.amount, inp.term_months, rate, pricing, inp.owner_guarantee, False, "Запрошенные условия"
+            )
+        )
     else:
         reasons.append(
             Reason(
                 "limit_exceeded",
                 "LIMIT",
-                f"Запрошено {inp.amount:,.0f} ₽, максимальный лимит на срок {inp.term_months} мес. — {limit:,.0f} ₽".replace(",", " "),
+                f"Запрошено {inp.amount:,.0f} ₽, максимальный лимит на срок {inp.term_months} мес. — {limit:,.0f} ₽".replace(
+                    ",", " "
+                ),
                 "Запрошенная сумма выше, чем позволяют обороты и текущая долговая нагрузка: "
                 "платежи по всем кредитам не должны превышать 40% поступлений на счёт",
             )
@@ -452,24 +459,66 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
             for t in NICE_TERMS:
                 if t <= inp.term_months or t < product.min_term or t > product.max_term:
                     continue
-                lim_t, _ = max_limit(product, inp.scoring.grade, rate, t, inp.effective_monthly_turnover, inp.existing_monthly_payments)
+                lim_t, _ = max_limit(
+                    product, inp.scoring.grade, rate, t, inp.effective_monthly_turnover, inp.existing_monthly_payments
+                )
                 if inp.amount <= lim_t:
-                    offers.append(_offer(product, inp.amount, t, rate, pricing, inp.owner_guarantee, True, f"Вся сумма на {t} мес."))
+                    offers.append(
+                        _offer(
+                            product, inp.amount, t, rate, pricing, inp.owner_guarantee, True, f"Вся сумма на {t} мес."
+                        )
+                    )
                     break
         # Вариант Б: меньшая сумма на тот же срок
         if limit >= product.min_amount:
-            offers.append(_offer(product, limit, inp.term_months, rate, pricing, inp.owner_guarantee, True, "Меньшая сумма на тот же срок"))
+            offers.append(
+                _offer(
+                    product,
+                    limit,
+                    inp.term_months,
+                    rate,
+                    pricing,
+                    inp.owner_guarantee,
+                    True,
+                    "Меньшая сумма на тот же срок",
+                )
+            )
         # Вариант В: другой продукт под ту же цель
         if not offers:
             for alt in inp.alt_products:
                 if alt.code == product.code or inp.purpose not in alt.purposes:
                     continue
-                alt_rate, alt_pricing = price(alt, inp.scoring.grade, inp.key_rate, inp.has_collateral, inp.owner_guarantee, inp.bank_tenure_months)
+                alt_rate, alt_pricing = price(
+                    alt,
+                    inp.scoring.grade,
+                    inp.key_rate,
+                    inp.has_collateral,
+                    inp.owner_guarantee,
+                    inp.bank_tenure_months,
+                )
                 alt_term = min(max(inp.term_months, alt.min_term), alt.max_term)
-                alt_limit, _ = max_limit(alt, inp.scoring.grade, alt_rate, alt_term, inp.effective_monthly_turnover, inp.existing_monthly_payments)
+                alt_limit, _ = max_limit(
+                    alt,
+                    inp.scoring.grade,
+                    alt_rate,
+                    alt_term,
+                    inp.effective_monthly_turnover,
+                    inp.existing_monthly_payments,
+                )
                 amount = min(inp.amount, alt_limit)
                 if amount >= alt.min_amount:
-                    offers.append(_offer(alt, amount, alt_term, alt_rate, alt_pricing, inp.owner_guarantee, True, f"Другой продукт: {alt.name}"))
+                    offers.append(
+                        _offer(
+                            alt,
+                            amount,
+                            alt_term,
+                            alt_rate,
+                            alt_pricing,
+                            inp.owner_guarantee,
+                            True,
+                            f"Другой продукт: {alt.name}",
+                        )
+                    )
                     break
         if not offers:
             reasons.append(

@@ -1,0 +1,33 @@
+[project]
+name = "smart-credit-cabinet-backend"
+version = "1.0.0"
+description = "Кредитный конвейер для МСБ: API, воркер, доменная логика"
+requires-python = ">=3.13"
+# Точные версии и хеши зависимостей — в requirements.txt / requirements-dev.txt (lock-файлы).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra -q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "BLE"]
+ignore = [
+    "B008",  # Depends(...) в аргументах по умолчанию — стандартный приём FastAPI
+    "E501",  # длинные строки с русским текстом сообщений допустимы
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
