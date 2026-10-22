@@ -63,9 +63,10 @@
 | pyyaml | 6.0.3 | MIT |
 | click | 8.5.0 | BSD-3-Clause |
 | typing-extensions | 4.16.0 | PSF-2.0 |
+| tzdata | 2026.5 | Apache-2.0 |
 | typing-inspection, annotated-types, annotated-doc | 0.4.4, 0.8.0, 0.0.5 | MIT |
 
-Только для разработки и тестов (`backend/requirements-dev.txt`): pytest 9.1.1 (MIT), pluggy (MIT), iniconfig (MIT), packaging (Apache-2.0 OR BSD-2-Clause), pygments (BSD-2-Clause), ruff 0.17.2 (MIT).
+Только для разработки и тестов (`backend/requirements-dev.txt`): pytest 9.1.1 (MIT), pluggy (MIT), iniconfig (MIT), packaging (Apache-2.0 OR BSD-2-Clause), pygments (BSD-2-Clause), colorama 0.4.6 (BSD-3-Clause, только в Windows), ruff 0.17.2 (MIT).
 
 ## Интерфейс (npm)
 

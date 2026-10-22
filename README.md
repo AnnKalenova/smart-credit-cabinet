@@ -38,7 +38,7 @@ docker compose up -d --build
 | Веб-интерфейс | http://localhost:8080 |
 | Swagger (API) | http://localhost:8080/api/docs |
 | Swagger симулятора внешних систем | http://localhost:8001/docs |
-| Метрики Prometheus | http://localhost:8080/metrics |
+| Метрики Prometheus (только с этого компьютера) | http://localhost:8000/metrics |
 
 При первом запуске API сам применяет миграции и загружает синтетические данные. Отдельных шагов не нужно.
 
@@ -49,7 +49,7 @@ docker compose down                      # остановить
 docker compose down -v                   # остановить и удалить данные (следующий запуск — с чистой базы)
 ```
 
-Без Docker Hub, на ПК для разработки — см. [Разработка без Docker](#разработка-без-docker).
+Запуск без Docker — см. [Разработка без Docker](#разработка-без-docker).
 
 ## Демо-учётки и сценарии
 
@@ -99,8 +99,8 @@ npx newman run docs/postman/smart-credit-cabinet.postman_collection.json   # 92 
 - ответ на запрос банка в той же заявке, переписка со специалистом, уведомления в кабинете;
 - предложение с объяснением: что помогло решению, что снизило оценку, из чего складывается ставка; встречные варианты на выбор;
 - проект договора и график платежей, подпись, выдача, раздел «Кредиты»;
-- разделение прав: бухгалтер готовит, руководитель подписывает;
-- отзыв заявки, повторная подача с копированием данных.
+- разделение прав: бухгалтер готовит заявку, а подписывает, выбирает условия и отказывается от предложения руководитель;
+- отзыв заявки; повторная подача — параметры, залог и копии документов переносятся в новый черновик, согласия подписываются заново.
 
 **Обработка в банке**
 - конвейер этапов: проверка полноты → сбор данных → скоринг → решение → выдача; воркеры масштабируются;
@@ -109,7 +109,7 @@ npx newman run docs/postman/smart-credit-cabinet.postman_collection.json   # 92 
 - мониторинг: воронка, доля автоматических решений, время до решения и выдачи, ошибки внешних систем; моделирование сбоев;
 - параметры политики: ключевая ставка меняется риск-менеджером без релиза.
 
-**Enterprise-аспекты:** JWT и роли с проверкой доступа на уровне записи, аудит всех действий, оптимистичная блокировка, идемпотентная выдача, повторы с экспоненциальной паузой, этап с упавшего воркера возвращается в очередь, healthchecks, JSON-логи с `request_id`, метрики Prometheus, миграции, lock-файлы с хешами, CI. Подробно — [docs/architecture.md](docs/architecture.md).
+**Enterprise-аспекты:** JWT и роли с проверкой доступа на уровне записи, защита от подбора пароля и кодов подписи, проверка формата файлов по содержимому, ограничения на все поля ввода, журнал аудита, оптимистичная блокировка, идемпотентная выдача, повторы с экспоненциальной паузой, этап с упавшего воркера возвращается в очередь, healthcheck у каждого контейнера, JSON-логи с `request_id`, метрики Prometheus, миграции, lock-файлы с хешами, CI. Подробно — [docs/architecture.md](docs/architecture.md).
 
 ## Скриншоты
 
@@ -133,7 +133,7 @@ npx newman run docs/postman/smart-credit-cabinet.postman_collection.json   # 92 
 | `db` | PostgreSQL 16 | данные, журнал аудита, очередь этапов |
 | `integrations-mock` | FastAPI | симулятор ЕГРЮЛ/ЕГРИП, ФНС «Прозрачный бизнес», БКИ, АБС |
 
-ИИ в кредитном решении не используется: логика детерминированная и объяснимая ([docs/decision-logic.md](docs/decision-logic.md)). Конфигурация для необязательного OpenAI-совместимого провайдера с открытыми весами заложена в `.env.example`. Основной сценарий от неё не зависит.
+ИИ в кредитном решении не используется: логика детерминированная и объяснимая ([docs/decision-logic.md](docs/decision-logic.md)).
 
 ## Требования к окружению
 
@@ -145,7 +145,7 @@ npx newman run docs/postman/smart-credit-cabinet.postman_collection.json   # 92 
 | GPU | не нужен | не нужен |
 | Сеть | только при первой сборке (образы и пакеты) | для установки зависимостей |
 
-Версии зафиксированы: Python — `backend/requirements.txt` и `integrations-mock/requirements.txt` (с хешами, `pip --require-hashes`), Node — `frontend/package-lock.json`, образы — теги в Dockerfile и `docker-compose.yml`.
+Версии зафиксированы: Python — `backend/requirements.txt` и `integrations-mock/requirements.txt` (с хешами, `pip --require-hashes`, для Linux, macOS и Windows), Node — `frontend/package-lock.json`, базовые образы — теги версий в Dockerfile и `docker-compose.yml` (`python:3.13-slim`, `postgres:16-alpine`, `nginx:1.27-alpine`, `node:22-alpine`). Теги фиксируют версию, но получают патчи безопасности; для побитовой воспроизводимости в рабочей среде образы закрепляются по digest (`image@sha256:…`) во внутреннем реестре.
 
 ## Конфигурация
 
@@ -166,12 +166,11 @@ cp .env.example .env   # при необходимости
 | `PIPELINE_STAGE_DELAY_SECONDS` | 1.2 | пауза между этапами, чтобы в демо было видно движение; в рабочей среде 0 |
 | `INTEGRATION_TIMEOUT_SECONDS` / `INTEGRATION_MAX_ATTEMPTS` / `INTEGRATION_BACKOFF_BASE_SECONDS` | 5 / 5 / 2 | таймаут, число попыток и база паузы при вызове внешних систем |
 | `OFFER_VALID_DAYS` / `MANUAL_REVIEW_SLA_HOURS` | 10 / 4 | срок действия предложения и SLA ручного рассмотрения |
-| `LLM_ENABLED`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | выключено | необязательный OpenAI-совместимый провайдер с открытыми весами (например, Ollama) |
 
 ### Разработка без Docker
 
 ```bash
-# PostgreSQL 16 с пользователем и базой credit/credit на localhost:5432
+# PostgreSQL 16 с пользователем credit/credit и базами credit (стенд) и credit_test (тесты) на localhost:5432
 cd backend
 pip install --require-hashes -r requirements.txt -r requirements-dev.txt
 export DATABASE_URL=postgresql+psycopg://credit:credit@localhost:5432/credit UPLOAD_DIR=./uploads
@@ -185,6 +184,8 @@ uvicorn app.main:app --port 8001          # симулятор
 cd ../frontend && npm ci && npm run dev   # http://localhost:5173, /api проксируется на :8000
 ```
 
+В Windows команды те же, но переменные окружения задаются в PowerShell: `$env:DATABASE_URL="postgresql+psycopg://credit:credit@localhost:5432/credit"`. Проще всего разрабатывать в WSL 2 или запускать стенд в Docker.
+
 ### Развёртывание на сервере
 
 Тот же `docker compose up -d --build` на VPS с Docker. Задайте в `.env` свой `JWT_SECRET`, пароль БД и `WEB_PORT=80`. HTTPS — через внешний обратный прокси или балансировщик.
@@ -192,14 +193,16 @@ cd ../frontend && npm ci && npm run dev   # http://localhost:5173, /api прок
 ## Тесты
 
 ```bash
-cd backend && pytest                       # 108 тестов: 84 модульных + 24 интеграционных (нужен PostgreSQL)
+cd backend && pytest                       # 143 теста: 102 модульных + 41 интеграционный
 ruff check . && ruff format --check .      # линтер и форматирование
 cd ../frontend && npm run build            # проверка типов TypeScript и сборка
 python e2e/api_scenarios.py --base-url http://localhost:8080   # сквозные сценарии на стенде
 python e2e/ui_tour.py --base-url http://localhost:8080         # UI-прогон в браузере (Playwright) со скриншотами
 ```
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) на каждый push: линтер и тесты с PostgreSQL → сборка интерфейса → `docker compose up --build --wait` → сквозные сценарии через nginx.
+Интеграционным тестам нужен PostgreSQL с отдельной базой `credit_test`: по умолчанию `postgresql+psycopg://credit:credit@127.0.0.1:5432/credit_test`, другой адрес задаётся переменной `TEST_DATABASE_URL`. Тесты пересоздают схему этой базы, поэтому её имя обязано оканчиваться на `_test`. Модульные тесты базу не используют и запускаются без PostgreSQL: `pytest tests/test_finance.py tests/test_scoring.py tests/test_policy.py tests/test_statuses_checks.py tests/test_storage_worker.py`.
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) на каждый push: линтер и тесты с PostgreSQL → сборка интерфейса → `docker compose up --build --wait` → сквозные сценарии и Postman-коллекция через nginx.
 
 ## Документация
 
@@ -234,7 +237,7 @@ CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) на каждый push
 | Без платных ресурсов, автономно, внешние системы — моки | `integrations-mock`, [docs/assumptions.md](docs/assumptions.md) |
 | Сценарий внутри продукта: без почты, SMS, мессенджеров | подпись кодом в кабинете, переписка и уведомления в кабинете |
 | Веб-интерфейс, не мобильное приложение | React SPA |
-| LLM только с открытыми весами | LLM не используется; настройка провайдера необязательна |
+| LLM только с открытыми весами | LLM и другие ИИ-модели в решении не используются |
 
 ## Структура репозитория
 

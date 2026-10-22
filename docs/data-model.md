@@ -27,6 +27,7 @@ erDiagram
     applications ||--o{ application_events : "журнал"
     applications ||--o{ pipeline_jobs : "этапы конвейера"
     users ||--o{ notifications : "уведомления"
+    users ||..o{ login_attempts : "попытки входа"
 
     companies {
         uuid id PK
@@ -95,6 +96,13 @@ erDiagram
         int attempts
         timestamptz run_after
     }
+    login_attempts {
+        bigint id PK
+        string login "без FK: учитываются и несуществующие логины"
+        bool success
+        string ip
+        timestamptz created_at
+    }
 ```
 
 ## Таблицы
@@ -122,12 +130,13 @@ erDiagram
 | `loans` | выданные кредиты с графиком платежей | `contract_number`, `loan_account`, `schedule` |
 | `application_events` | журнал аудита всех действий | `event_type`, `from_status`, `to_status`, `actor_type`, `client_visible` |
 | `notifications` | уведомления в кабинете (вместо SMS и почты) | `user_id`, `is_read` |
+| `login_attempts` | попытки входа: защита от подбора пароля и журнал входов | `login`, `success`, `ip`, `created_at` |
 | `pipeline_jobs` | очередь этапов конвейера для воркеров | `stage`, `status`, `attempts`, `run_after`, `locked_by` |
 
 ## Решения, важные для банковской разработки
 
 - **Оптимистичная блокировка** (`applications.version`). Если клиент и воркер одновременно меняют заявку, второй получит конфликт (HTTP 409 или повтор этапа), а не перезапишет данные.
-- **Полный аудит.** Каждое изменение статуса и каждое действие пользователя попадает в `application_events`. Решения хранятся неизменяемыми записями с версией модели и политики (`model_version`, `policy_version`).
+- **Аудит.** Смены статуса, подписи, документы, запросы и решения аналитика попадают в `application_events` с автором и временем, вызовы внешних систем — в `integration_calls`, попытки входа — в `login_attempts`. Решения хранятся неизменяемыми записями с версией модели и политики (`model_version`, `policy_version`).
 - **Хранение секретов.** Пароли — PBKDF2-SHA256 (210 000 итераций), коды подписи — только хеш с солью, токены не хранятся.
 - **Персональные данные.** Хранятся только данные, нужные для решения, ссылки на согласия — в `consents`. В логах нет ПДн: только идентификаторы заявок и технические поля.
 - **Очередь в той же БД.** Этап конвейера ставится в очередь в той же транзакции, что и смена статуса, поэтому этап не потеряется и не запустится для неподтверждённого статуса.

@@ -91,6 +91,12 @@
               }
             }
           },
+          "401": {
+            "description": "Неверный логин или пароль"
+          },
+          "429": {
+            "description": "Слишком много попыток"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2257,10 +2263,13 @@
           },
           "product_code": {
             "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
             "title": "Product Code"
           },
           "amount": {
             "type": "number",
+            "maximum": 10000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Amount"
           },
@@ -2272,12 +2281,15 @@
           },
           "purpose": {
             "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
             "title": "Purpose"
           },
           "purpose_details": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 2000
               },
               {
                 "type": "null"
@@ -2702,7 +2714,9 @@
           "product_code": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 32,
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -2714,6 +2728,7 @@
             "anyOf": [
               {
                 "type": "number",
+                "maximum": 10000000000.0,
                 "exclusiveMinimum": 0.0
               },
               {
@@ -2738,7 +2753,9 @@
           "purpose": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 32,
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -2749,7 +2766,8 @@
           "purpose_details": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 2000
               },
               {
                 "type": "null"
@@ -2761,6 +2779,7 @@
             "anyOf": [
               {
                 "type": "number",
+                "maximum": 1000000000000.0,
                 "minimum": 0.0
               },
               {
@@ -2783,7 +2802,8 @@
           "collateral_description": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 400
               },
               {
                 "type": "null"
@@ -2805,7 +2825,8 @@
           "contact_name": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 200
               },
               {
                 "type": "null"
@@ -2816,7 +2837,8 @@
           "contact_phone": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 32
               },
               {
                 "type": "null"
@@ -3001,6 +3023,7 @@
               "$ref": "#/components/schemas/BankOfferIn"
             },
             "type": "array",
+            "maxItems": 3,
             "title": "Offers",
             "default": []
           },
@@ -3009,13 +3032,15 @@
               "$ref": "#/components/schemas/BankInfoItemIn"
             },
             "type": "array",
+            "maxItems": 10,
             "title": "Info Items",
             "default": []
           },
           "reason": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 500
               },
               {
                 "type": "null"
@@ -3026,7 +3051,8 @@
           "message_to_client": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 4000
               },
               {
                 "type": "null"
@@ -3037,7 +3063,8 @@
           "comment_internal": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 4000
               },
               {
                 "type": "null"
@@ -3065,7 +3092,9 @@
           "doc_type": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 32,
+                "minLength": 1
               },
               {
                 "type": "null"
@@ -3075,6 +3104,8 @@
           },
           "label": {
             "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
             "title": "Label"
           }
         },
@@ -3089,10 +3120,13 @@
         "properties": {
           "product_code": {
             "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
             "title": "Product Code"
           },
           "amount": {
             "type": "number",
+            "maximum": 10000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Amount"
           },
@@ -3118,7 +3152,8 @@
           "label": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 120
               },
               {
                 "type": "null"
@@ -3717,7 +3752,8 @@
           "comment": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 4000
               },
               {
                 "type": "null"
@@ -3850,13 +3886,15 @@
         "properties": {
           "login": {
             "type": "string",
+            "maxLength": 64,
             "title": "Login",
             "examples": [
-              "+79000000001"
+              "smirnov"
             ]
           },
           "password": {
             "type": "string",
+            "maxLength": 128,
             "title": "Password",
             "examples": [
               "demo1234"
@@ -3879,10 +3917,13 @@
           },
           "purpose": {
             "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
             "title": "Purpose"
           },
           "amount": {
             "type": "number",
+            "maximum": 10000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Amount"
           },

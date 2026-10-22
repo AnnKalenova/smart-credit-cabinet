@@ -30,13 +30,16 @@ POST /api/v1/auth/login
 
 | Код | Когда | Тело |
 |---|---|---|
-| 401 | нет токена или он истёк | `{"detail": "Требуется вход в систему"}` |
-| 403 | не та роль или нет права подписи | `{"detail": "Подписывать может руководитель…"}` |
+| 401 | нет токена или он истёк; неверный логин или пароль | `{"detail": "Требуется вход в систему"}` |
+| 403 | не та роль или нет права подписи | `{"detail": "Выбрать условия кредита может руководитель или представитель по доверенности…"}` |
 | 404 | объект не найден или принадлежит другой компании | `{"detail": "Заявка не найдена"}` |
-| 409 | действие недоступно в текущем статусе, конфликт версий | `{"detail": "Действие недоступно в статусе заявки «OFFER_READY»"}` |
-| 422 | ошибка валидации или бизнес-проверки | `{"detail": {"message": "Заявку нельзя отправить", "problems": ["Приложите документы: …"]}}` |
+| 409 | действие недоступно в текущем статусе, конфликт версий, истёк срок предложения | `{"detail": "Действие недоступно: заявка в статусе «Готово предложение». Обновите страницу"}` |
+| 413 | файл больше `MAX_UPLOAD_MB` | `{"detail": "Файл больше 10 МБ"}` |
+| 422 | ошибка валидации или бизнес-проверки | `{"detail": {"message": "Проверьте введённые данные", "problems": ["Сумма: должно быть не больше 10 000 000 000"]}}` |
+| 429 | 10 неудачных попыток входа подряд (вход по логину закрыт на 10 минут), больше 10 кодов подписи за 10 минут, 5 неверных вводов кода | `{"detail": "Слишком много неудачных попыток входа. Попробуйте через 10 минут"}` |
+| 500 | непредвиденная ошибка | `{"detail": "Внутренняя ошибка сервиса. Попробуйте ещё раз", "request_id": "…"}` |
 
-Ответы с ошибками бизнес-проверки содержат список `problems` — интерфейс показывает его пользователю как есть.
+Ответы с ошибками валидации и бизнес-проверки содержат список `problems` на русском — интерфейс показывает его пользователю как есть. Каждый ответ несёт заголовок `X-Request-ID`: по нему запрос находится в JSON-логах API.
 
 ## Эндпоинты
 
@@ -62,21 +65,21 @@ POST /api/v1/auth/login
 | POST | `/api/v1/applications` | создать черновик (данные компании и выручка подставляются) | → DRAFT |
 | GET | `/api/v1/applications/{id}` | заявка: статус, «сейчас / что дальше», предложения, объяснение решения, история, права | любой |
 | PATCH | `/api/v1/applications/{id}` | изменить черновик (автосохранение) | DRAFT |
-| POST | `/api/v1/applications/{id}/documents` | загрузить документ (multipart: `doc_type`, `file`) | DRAFT, NEEDS_INFO |
+| POST | `/api/v1/applications/{id}/documents` | загрузить документ (multipart: `doc_type`, `file`; PDF, JPG, PNG, TXT, DOC(X), XLS(X) до 10 МБ, формат сверяется с содержимым файла) | DRAFT, NEEDS_INFO |
 | POST | `/api/v1/applications/{id}/documents/demo?doc_type=` | приложить синтетический документ | DRAFT, NEEDS_INFO |
 | GET / DELETE | `/api/v1/applications/{id}/documents/{doc_id}` | скачать / удалить документ | — |
 | POST | `/api/v1/applications/{id}/sign-challenges` | получить код подписи (`CONSENTS` или `CONTRACT`) | DRAFT / SIGNING |
 | POST | `/api/v1/applications/{id}/consents` | подписать согласия на запрос в БКИ и обработку данных | DRAFT |
-| POST | `/api/v1/applications/{id}/request-signature` | передать на подпись руководителю (для бухгалтера) | DRAFT, SIGNING |
+| POST | `/api/v1/applications/{id}/request-signature` | передать на подпись руководителю (для бухгалтера) | DRAFT, OFFER_READY, SIGNING |
 | POST | `/api/v1/applications/{id}/submit` | отправить заявку | DRAFT → PRECHECK |
-| POST | `/api/v1/applications/{id}/info-response` | ответить на запрос банка (комментарий, поля) | NEEDS_INFO → PRECHECK |
-| POST | `/api/v1/applications/{id}/cancel` | отозвать заявку | до решения → CANCELLED |
-| POST | `/api/v1/applications/{id}/offers/{offer_id}/accept` | выбрать вариант предложения | OFFER_READY → SIGNING |
-| POST | `/api/v1/applications/{id}/offers/decline` | отказаться от предложения | OFFER_READY → CLIENT_DECLINED |
-| POST | `/api/v1/applications/{id}/signing/back` | вернуться к выбору условий | SIGNING → OFFER_READY |
+| POST | `/api/v1/applications/{id}/info-response` | ответить на запрос банка (комментарий, поля); запрошенные документы прикладываются после запроса | NEEDS_INFO → PRECHECK |
+| POST | `/api/v1/applications/{id}/cancel` | отозвать заявку (подписант) или отменить свой черновик | до решения → CANCELLED |
+| POST | `/api/v1/applications/{id}/offers/{offer_id}/accept` | выбрать вариант предложения (подписант) | OFFER_READY → SIGNING |
+| POST | `/api/v1/applications/{id}/offers/decline` | отказаться от предложения (подписант) | OFFER_READY → CLIENT_DECLINED |
+| POST | `/api/v1/applications/{id}/signing/back` | вернуться к выбору условий (подписант); если срок предложения истёк — 409 и EXPIRED | SIGNING → OFFER_READY |
 | GET | `/api/v1/applications/{id}/contract` | проект договора и полный график платежей | SIGNING и далее |
-| POST | `/api/v1/applications/{id}/sign` | подписать договор кодом | SIGNING → DISBURSEMENT |
-| POST | `/api/v1/applications/{id}/reapply` | новая заявка на основе закрытой | закрытые |
+| POST | `/api/v1/applications/{id}/sign` | подписать договор кодом; по истёкшему предложению — 409 и EXPIRED | SIGNING → DISBURSEMENT |
+| POST | `/api/v1/applications/{id}/reapply` | новая заявка на основе закрытой: параметры, залог и копии документов переносятся | закрытые |
 | GET / POST | `/api/v1/applications/{id}/messages` | переписка с банком | любой |
 
 ### Банк
@@ -115,7 +118,7 @@ POST /api/v1/bank/applications/{id}/decision
 |---|---|---|
 | GET | `/health/live` | процесс жив |
 | GET | `/health/ready` | готовность (проверка БД) |
-| GET | `/metrics` | метрики Prometheus |
+| GET | `/metrics` | метрики Prometheus; только напрямую с API (http://localhost:8000/metrics), nginx наружу их не отдаёт |
 
 ## Основной сценарий через curl
 
