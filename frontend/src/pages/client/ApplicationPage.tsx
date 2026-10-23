@@ -229,7 +229,7 @@ function Messages({ app }: { app: Application }) {
     },
     onError: (e) => toast.error(e),
   });
-  if (app.status === "DRAFT") return null;
+  if (!app.submitted_at) return null; // заявку банк ещё не видел — переписки по ней нет
   return (
     <section className="panel">
       <div className="panel-head">

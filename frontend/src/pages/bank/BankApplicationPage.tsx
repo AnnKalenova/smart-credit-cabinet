@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, download } from "../../api/client";
 import type { BankApplication, BankDecision, Message } from "../../api/types";
-import { AmountInput, Field, Grade, Loader, Timeline, TurnoverBars } from "../../components/ui";
+import { AmountInput, Field, Grade, Loader, Timeline, TurnoverBars, bankTone } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
 import { date, dateTime, formatInputAmount, money, parseAmount, pct, rateRange, relativeDue } from "../../lib/format";
 import { useToast } from "../../lib/toast";
@@ -745,7 +745,7 @@ export function BankApplicationPage() {
         <div className="kpi">
           <div className="l">Статус</div>
           <div style={{ marginTop: 6 }}>
-            <span className={`chip ${app.status === "MANUAL_REVIEW" ? "action" : app.status === "ISSUED" ? "positive" : app.status === "DECLINED" ? "negative" : "progress"}`}>{app.status_label}</span>
+            <span className={`chip ${bankTone(app.status)}`}>{app.status_label}</span>
           </div>
           {app.stage_detail && <div className="xs faint" style={{ marginTop: 4 }}>{app.stage_detail}</div>}
         </div>

@@ -163,7 +163,9 @@ export function Layout({ children, area }: { children: ReactNode; area: "client"
           </div>
         </div>
       </header>
-      <main className="page">{children}</main>
+      <main id="main" tabIndex={-1} className="page">
+        {children}
+      </main>
     </>
   );
 }

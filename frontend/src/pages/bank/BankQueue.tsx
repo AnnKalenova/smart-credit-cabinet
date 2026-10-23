@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { BankRow } from "../../api/types";
-import { Empty, Grade, Loader } from "../../components/ui";
+import { Empty, Grade, Loader, bankTone } from "../../components/ui";
 import { dateTime, money, relativeDue } from "../../lib/format";
 
 const SCOPES = [
@@ -13,18 +13,6 @@ const SCOPES = [
   { key: "mine", label: "Мои" },
   { key: "all", label: "Все" },
 ] as const;
-
-const TONE: Record<string, string> = {
-  MANUAL_REVIEW: "action",
-  NEEDS_INFO: "action",
-  OFFER_READY: "progress",
-  SIGNING: "progress",
-  ISSUED: "positive",
-  DECLINED: "negative",
-  CLIENT_DECLINED: "neutral",
-  CANCELLED: "neutral",
-  EXPIRED: "negative",
-};
 
 export function BankQueue() {
   const nav = useNavigate();
@@ -117,7 +105,7 @@ export function BankQueue() {
                       </td>
                       <td className="r nowrap">{money(r.amount)}</td>
                       <td>
-                        <span className={`chip ${TONE[r.status] ?? "progress"}`}>{r.status_label}</span>
+                        <span className={`chip ${bankTone(r.status)}`}>{r.status_label}</span>
                         {r.stage_detail && !["ISSUED", "DECLINED"].includes(r.status) && <div className="xs faint" style={{ marginTop: 4, maxWidth: 240 }}>{r.stage_detail}</div>}
                       </td>
                       <td>

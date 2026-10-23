@@ -1,9 +1,26 @@
 import { Check, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, type InputHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import type { AppEvent, StatusView, TurnoverPoint } from "../api/types";
 import { dateTime, formatInputAmount, groupDigits, money, monthShort, moneyShort } from "../lib/format";
 
 export const PROCESSING = new Set(["SUBMITTED", "PRECHECK", "ENRICHMENT", "SCORING", "DECISION", "MANUAL_REVIEW", "DISBURSEMENT"]);
+
+// цвет статуса в рабочем месте банка: отказ банка и истёкшее предложение — красным, решения клиента — серым
+const BANK_TONE: Record<string, string> = {
+  MANUAL_REVIEW: "action",
+  NEEDS_INFO: "action",
+  OFFER_READY: "progress",
+  SIGNING: "progress",
+  ISSUED: "positive",
+  DECLINED: "negative",
+  EXPIRED: "negative",
+  CLIENT_DECLINED: "neutral",
+  CANCELLED: "neutral",
+};
+
+export function bankTone(status: string): string {
+  return BANK_TONE[status] ?? "progress";
+}
 
 export function StatusChip({ view, label }: { view: Pick<StatusView, "tone" | "title">; label?: string }) {
   return <span className={`chip ${view.tone}`}>{label ?? view.title}</span>;
@@ -117,8 +134,9 @@ export function Modal({
   const box = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
+  // элемент, с которого открыли окно, — запоминается при первом рендере, до фокуса внутри окна
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
     const el = box.current;
     const field = el?.querySelector<HTMLElement>("input:not([disabled]), textarea:not([disabled]), select:not([disabled])");
     (field ?? el)?.focus();
@@ -148,9 +166,11 @@ export function Modal({
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      if (opener && document.contains(opener)) opener.focus();
+      // кнопка могла исчезнуть (например, после подписи) — тогда фокус на основное содержимое страницы
+      const back = opener && document.contains(opener) && opener !== document.body ? opener : document.getElementById("main");
+      back?.focus({ preventScroll: true });
     };
-  }, []);
+  }, [opener]);
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={box} tabIndex={-1} className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
@@ -167,8 +187,15 @@ export function Modal({
   );
 }
 
-/** Поле суммы с разрядами. Курсор остаётся у той же цифры, когда разряды сдвигаются; если стереть первую
- *  цифру, остальные не пропадают (её можно набрать заново), лишние нули убираются при уходе из поля. */
+/** Цифры суммы из введённого текста. Копейки («14 400 000,00») отбрасываются — иначе они стали бы
+ *  лишними разрядами; точка с тремя цифрами («1.500.000») — разделитель разрядов, а не копеек. */
+function amountDigits(text: string): string {
+  return text.replace(/[.,]\d{0,2}\s*(₽|руб\.?)?\s*$/i, "").replace(/\D/g, "");
+}
+
+/** Поле суммы с разрядами. Курсор остаётся у той же цифры, когда разряды сдвигаются; Backspace и Delete
+ *  у пробела удаляют соседнюю цифру; если стереть первую цифру, остальные не пропадают (её можно набрать
+ *  заново), лишние нули убираются при уходе из поля; ввод сверх лимита разрядов не принимается. */
 export function AmountInput({
   value,
   onValueChange,
@@ -187,6 +214,9 @@ export function AmountInput({
     if (el && caret.current !== null && document.activeElement === el) el.setSelectionRange(caret.current, caret.current);
     caret.current = null;
   });
+  // текст не меняется — React вернёт прежнее значение, курсор ставим сами
+  const keepCaret = (at: number) =>
+    requestAnimationFrame(() => document.activeElement === ref.current && ref.current?.setSelectionRange(at, at));
   return (
     <input
       {...rest}
@@ -197,15 +227,28 @@ export function AmountInput({
       onChange={(e) => {
         const raw = e.target.value;
         const pos = e.target.selectionStart ?? raw.length;
-        const digits = raw.replace(/\D/g, "").slice(0, maxDigits);
-        const before = Math.min(raw.slice(0, pos).replace(/\D/g, "").length, digits.length);
+        const kind = (e.nativeEvent as InputEvent).inputType ?? "";
+        let digits = amountDigits(raw);
+        let before = Math.min(raw.slice(0, pos).replace(/\D/g, "").length, digits.length);
+        if (digits === value.replace(/\D/g, "")) {
+          // стёрли пробел между разрядами — удаляем соседнюю цифру, как ожидает человек
+          if (kind === "deleteContentBackward" && before > 0) {
+            digits = digits.slice(0, before - 1) + digits.slice(before);
+            before -= 1;
+          } else if (kind === "deleteContentForward" && before < digits.length) {
+            digits = digits.slice(0, before) + digits.slice(before + 1);
+          }
+        }
+        if (digits.length > maxDigits) {
+          keepCaret(Math.max(0, pos - 1));
+          return;
+        }
         const text = groupDigits(digits);
         // курсор — сразу после той же по счёту цифры, что и до форматирования
         let i = 0;
         for (let seen = 0; i < text.length && seen < before; i++) if (/\d/.test(text[i])) seen++;
         if (text === value) {
-          // введён не цифровой символ: значение не меняется, React вернёт прежний текст — курсор ставим сами
-          requestAnimationFrame(() => document.activeElement === ref.current && ref.current?.setSelectionRange(i, i));
+          keepCaret(i);
           return;
         }
         caret.current = i;

@@ -72,6 +72,7 @@ from app.services.views import (
     document_out,
     message_out,
     offer_out,
+    proposed_conditions,
     revenue_estimate,
     schedule_for,
     summary_out,
@@ -488,15 +489,28 @@ def request_signature(
             sim = Simulator(db, app)
             params = sim.params(**body.conditions.model_dump())
             product = sim.validate(params)
+            params.has_collateral = pledged(product, params.has_collateral)
         except SimulationError as e:
             code = status.HTTP_409_CONFLICT if e.unavailable else status.HTTP_422_UNPROCESSABLE_CONTENT
             raise HTTPException(code, str(e)) from e
+        if params == sim.base_params():
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "Условия совпадают с текущей заявкой — измените их"
+            )
+        if sim.matching_offer(params):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Этот вариант есть в предложении банка — передайте заявку руководителю, чтобы он его выбрал",
+            )
+        last = proposed_conditions(db, app)
+        if last and last["conditions"] == params.to_dict():
+            raise HTTPException(status.HTTP_409_CONFLICT, "Эти условия уже переданы руководителю")
         text = describe(product, params)
         notify_company(
             db,
             app,
             f"Новые условия по заявке № {app.number}",
-            f"{user.full_name} ({position}) предлагает подать новую заявку: {text}. "
+            f"{user.full_name} ({position}) предлагает подать новую заявку: {text.rstrip('.')}. "
             "Откройте заявку — условия уже в конструкторе.",
             signers_only=True,
         )
@@ -712,6 +726,34 @@ def decline_offers(app_id: uuid.UUID, db: Session = Depends(get_db), user: User 
     return _out(db, app, member)
 
 
+def _require_new_conditions(db: Session, parent: Application, body: ApplicationCreate, c: ReapplyIn) -> None:
+    """Закрывать заявку ради такой же нет смысла: те же условия или вариант из действующего предложения."""
+    product = db.get(Product, body.product_code)
+    collateral = pledged(product, parent.has_collateral if c.has_collateral is None else c.has_collateral)
+    guarantee = bool(parent.owner_guarantee if c.owner_guarantee is None else c.owner_guarantee)
+    same_flags = collateral == pledged(product, parent.has_collateral) and guarantee == bool(parent.owner_guarantee)
+    if (
+        same_flags
+        and body.product_code == parent.product_code
+        and abs(body.amount - float(parent.amount)) < 0.5
+        and body.term_months == parent.term_months
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Условия совпадают с текущей заявкой — измените их")
+    if parent.status == AppStatus.OFFER_READY and same_flags:
+        now = utcnow()
+        for o in db.scalars(select(Offer).where(Offer.application_id == parent.id, Offer.status == OfferStatus.ACTIVE)):
+            if (
+                o.valid_until > now
+                and o.product_code == body.product_code
+                and o.term_months == body.term_months
+                and abs(float(o.amount) - body.amount) < 0.5
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Этот вариант есть в предложении банка — выберите его, новая заявка не нужна",
+                )
+
+
 def _decline_offers(db: Session, app: Application, user: User, title: str = "Отказ от предложения") -> bool:
     """Отказ от предложения. False — если оно уже истекло: заявка закрывается как истёкшая."""
     active = list(db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE)))
@@ -859,6 +901,12 @@ def reapply(
     parent, parent_member = get_client_application(db, user, app_id)
     lock_key(db, f"reapply:{parent.id}")  # две одновременные кнопки не создадут две заявки
     db.refresh(parent)
+    if conditions and conditions.expected_status and conditions.expected_status != parent.status:
+        # пока клиент выбирал условия, заявка изменилась (например, специалист её одобрил) — ничего не закрываем
+        title = CLIENT_STATUS[AppStatus(parent.status)][0]
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Заявка изменилась: сейчас она в статусе «{title}». Обновите страницу"
+        )
     replace = bool(conditions and conditions.replace_current) and parent.status in REPLACEABLE
     if replace:
         # отказ от предложения и отзыв — те же права, что и у отдельных кнопок
@@ -904,6 +952,7 @@ def reapply(
                 f"Срок по продукту «{product.name}» — {months_range(product.min_term, product.max_term)}",
             )
     if replace:
+        _require_new_conditions(db, parent, body, c)
         # текущая заявка закрывается в той же транзакции: без новой заявки она не закроется, и наоборот
         if parent.status == AppStatus.OFFER_READY:
             _decline_offers(db, parent, user, title="Отказ от предложения: клиент подаёт заявку на других условиях")
@@ -915,6 +964,17 @@ def reapply(
         app.owner_guarantee = c.owner_guarantee
     if c.has_collateral is not None:
         app.has_collateral = pledged(db.get(Product, app.product_code), c.has_collateral)
+    # в истории исходной заявки — ссылка на новую
+    add_event(
+        db,
+        parent,
+        "REAPPLIED",
+        f"Создана новая заявка № {app.number}"
+        + (f": {fmt_money(app.amount)} на {app.term_months} мес." if conditions is not None else ""),
+        actor_type=ActorType.CLIENT,
+        actor_id=user.id,
+        payload={"application_id": str(app.id), "number": app.number},
+    )
     # Документы переносятся ссылкой на тот же файл: место в хранилище не расходуется, файл удаляется,
     # только когда на него не ссылается ни одна заявка. Согласия не переносятся — их подписывают заново
     copied = []
@@ -979,6 +1039,9 @@ def get_messages(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = 
 @router.post("/{app_id}/messages", response_model=MessageOut, status_code=201, summary="Написать в банк по заявке")
 def post_message(app_id: uuid.UUID, body: MessageIn, db: Session = Depends(get_db), user: User = Depends(client_only)):
     app, _ = get_client_application(db, user, app_id)
+    if app.submitted_at is None:
+        # черновик банк не видит — и переписку по нему тоже
+        raise HTTPException(status.HTTP_409_CONFLICT, "Переписка с банком откроется после отправки заявки")
     m = Message(application_id=app.id, author_id=user.id, author_role=Role.CLIENT, text=body.text.strip())
     db.add(m)
     _commit(db)

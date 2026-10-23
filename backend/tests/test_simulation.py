@@ -33,20 +33,18 @@ def test_counter_offer_shows_what_gets_approval(login):
     assert [o["amount"] for o in result["offers"]] == [o["amount"] for o in app["offers"]]
 
     by_code = {s["code"]: s for s in data["suggestions"]}
-    offered = {(o["amount"], o["term_months"]) for o in app["offers"]}
-    term = by_code["term"]
-    assert term["result"]["outcome"] == "APPROVE"
-    assert term["effect"].startswith("Одобрим автоматически вместо")
-    # варианты банка (вся сумма на 18 мес., 710 000 ₽ на 12 мес.) не повторяются в подсказках
-    assert (term["params"]["amount"], term["params"]["term_months"]) not in offered
-    assert "amount" not in by_code
+    # варианты банка (вся сумма на 18 мес., 710 000 ₽ на 12 мес.) не повторяются в подсказках,
+    # а более длинный срок, чем в предложении, не подсказывается: он хуже готового варианта
+    assert "term" not in by_code and "amount" not in by_code
+    assert by_code["guarantee"]["effect"] == "Ставка 21% вместо 21,5%"
     assert len(data["suggestions"]) <= 4
     # границы для элементов управления — только продукты под цель заявки
     assert {p["code"] for p in data["products"]} == {"EXPRESS", "INVESTMENT"}
 
-    # клиент сам подбирает условия: другой срок — сразу другое решение
-    longer = _simulate(c, app, term_months=by_code["term"]["params"]["term_months"], with_suggestions=False)
+    # клиент сам подбирает условия: срок из предложения и поручительство — одобрение и ставка ниже
+    longer = _simulate(c, app, term_months=18, owner_guarantee=True, with_suggestions=False)
     assert longer["result"]["outcome"] == "APPROVE" and longer["suggestions"] == []
+    assert longer["result"]["offer"] is None and longer["result"]["rate"] == 21.0
 
 
 def test_new_application_on_chosen_conditions(login):
@@ -187,12 +185,28 @@ def test_replace_current_offer_in_one_step(login):
     c.call("POST", _url(app, "/reapply"), json={"amount": 50_000_000, "replace_current": True}, expect=422)
     assert c.get(app["id"])["status"] == "OFFER_READY"
 
-    new = c.call("POST", _url(app, "/reapply"), json={**best["params"], "replace_current": True})
+    # ради такого же варианта или тех же условий заявку не закрываем
+    offer = app["offers"][0]
+    same_as_offer = {"amount": offer["amount"], "term_months": offer["term_months"], "replace_current": True}
+    resp = c.call("POST", _url(app, "/reapply"), json=same_as_offer, expect=409)
+    assert resp["detail"] == "Этот вариант есть в предложении банка — выберите его, новая заявка не нужна"
+    resp = c.call("POST", _url(app, "/reapply"), json={"replace_current": True}, expect=409)
+    assert resp["detail"] == "Условия совпадают с текущей заявкой — измените их"
+    # клиент видел другой статус — ничего не закрываем
+    stale = {**best["params"], "replace_current": True, "expected_status": "MANUAL_REVIEW"}
+    resp = c.call("POST", _url(app, "/reapply"), json=stale, expect=409)
+    assert resp["detail"] == "Заявка изменилась: сейчас она в статусе «Готово предложение». Обновите страницу"
+    assert c.get(app["id"])["status"] == "OFFER_READY"
+
+    body = {**best["params"], "replace_current": True, "expected_status": "OFFER_READY"}
+    new = c.call("POST", _url(app, "/reapply"), json=body)
     assert new["status"] == "DRAFT" and new["parent_id"] == app["id"]
     old = c.get(app["id"])
     assert old["status"] == "CLIENT_DECLINED"
     assert old["next_application"]["number"] == new["number"]
-    assert "Отказ от предложения: клиент подаёт заявку на других условиях" in [e["title"] for e in old["events"]]
+    titles = [e["title"] for e in old["events"]]
+    assert "Отказ от предложения: клиент подаёт заявку на других условиях" in titles
+    assert any(t.startswith(f"Создана новая заявка № {new['number']}") for t in titles)
     # повторная кнопка не создаст вторую заявку
     c.call("POST", _url(app, "/reapply"), json={**best["params"], "replace_current": True}, expect=409)
 
@@ -221,7 +235,12 @@ def test_employee_passes_conditions_to_signer(login):
     # без права подписи заменить заявку нельзя — можно передать условия руководителю
     o.call("POST", _url(app, "/reapply"), json={**proposal, "replace_current": True}, expect=403)
     o.call("POST", _url(app, "/request-signature"), json={"conditions": {"amount": 1}}, expect=422)
+    resp = o.call("POST", _url(app, "/request-signature"), json={"conditions": {}}, expect=422)
+    assert resp["detail"] == "Условия совпадают с текущей заявкой — измените их"
+    resp = o.call("POST", _url(app, "/request-signature"), json={"conditions": {"owner_guarantee": False}}, expect=422)
     o.call("POST", _url(app, "/request-signature"), json={"conditions": proposal})
+    resp = o.call("POST", _url(app, "/request-signature"), json={"conditions": proposal}, expect=409)
+    assert resp["detail"] == "Эти условия уже переданы руководителю"
 
     view = s.get(app["id"])
     assert view["proposed_conditions"]["conditions"] == {
@@ -236,6 +255,9 @@ def test_employee_passes_conditions_to_signer(login):
     assert view["proposed_conditions"]["text"] == text
     notes = s.call("GET", "/api/v1/notifications")["items"]
     assert notes[0]["title"] == f"Новые условия по заявке № {app['number']}" and text in notes[0]["body"]
+    assert ".." not in notes[0]["body"]
+    # сотрудник видит, что уже передал
+    assert o.get(app["id"])["proposed_conditions"]["text"] == text
     # руководитель подаёт новую заявку на этих условиях — предложение закрывается
     s.call("POST", _url(app, "/reapply"), json={**view["proposed_conditions"]["conditions"], "replace_current": True})
     assert s.get(app["id"])["proposed_conditions"] is None

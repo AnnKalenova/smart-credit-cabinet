@@ -381,10 +381,21 @@ def next_application(db: Session, app: Application) -> dict | None:
     }
 
 
+# где переданные руководителю условия ещё можно подать: предложение действует, заявка у специалиста
+# или закрыта без выдачи (истёк срок, отказ от предложения, отзыв) — конструктор там доступен
+PROPOSAL_STATUSES = {
+    AppStatus.OFFER_READY,
+    AppStatus.MANUAL_REVIEW,
+    AppStatus.EXPIRED,
+    AppStatus.CLIENT_DECLINED,
+    AppStatus.CANCELLED,
+}
+
+
 def proposed_conditions(db: Session, app: Application) -> dict | None:
-    """Условия из конструктора, которые сотрудник без права подписи передал руководителю, — пока заявка
-    в том же статусе, в котором их предложили."""
-    if app.status not in (AppStatus.OFFER_READY, AppStatus.MANUAL_REVIEW):
+    """Условия из конструктора, которые сотрудник без права подписи передал руководителю, — пока по ним
+    не подана новая заявка и заявку не перевели к подписанию договора."""
+    if AppStatus(app.status) not in PROPOSAL_STATUSES:
         return None
     ev = db.scalar(
         select(ApplicationEvent)
@@ -392,7 +403,12 @@ def proposed_conditions(db: Session, app: Application) -> dict | None:
         .order_by(ApplicationEvent.created_at.desc(), ApplicationEvent.id.desc())
         .limit(1)
     )
-    if ev is None or (app.status_changed_at and ev.created_at < app.status_changed_at):
+    if ev is None:
+        return None
+    newer_child = db.scalar(
+        select(Application.id).where(Application.parent_id == app.id, Application.created_at > ev.created_at).limit(1)
+    )
+    if newer_child is not None:
         return None
     return {
         "conditions": ev.payload.get("conditions"),

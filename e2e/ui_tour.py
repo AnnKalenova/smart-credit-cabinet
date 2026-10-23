@@ -105,17 +105,18 @@ async def counter_offer_view(page: Page, base: str) -> None:
     await page.wait_for_selector("text=Выберите вариант")
     await shot(page, "11-counter-offer")
 
-    # конструктор условий: подсказка, при которой банк одобряет автоматически (варианты банка в подсказках
-    # не повторяются — их выбирают в самом предложении)
+    # конструктор условий: срок из предложения банка и поручительство собственника — одобрение со ставкой
+    # ниже, чем в предложении (сам вариант банка конструктор узнаёт и предлагает просто выбрать)
     builder = page.locator("section", has=page.get_by_role("heading", name="Конструктор условий"))
     await builder.locator(".verdict-title").wait_for()
-    await (
-        builder.locator(".suggestion", has_text="Одобрим автоматически")
-        .first.get_by_role("button", name="Применить")
-        .click()
-    )
+    await builder.get_by_role("radio", name="18").click()
+    await builder.get_by_text("Выбрать этот вариант").wait_for()
+    await builder.get_by_text("Поручительство собственника").first.click()
+    # пересчёт готов, когда кнопка подачи новой заявки стала доступна
     await page.wait_for_function(
-        "() => document.querySelector('.verdict-title')?.textContent === 'Одобрим автоматически'", timeout=15_000
+        """() => [...document.querySelectorAll('button')].some(
+            (b) => b.textContent.includes('Подать заявку на этих условиях') && !b.disabled)""",
+        timeout=15_000,
     )
     await page.wait_for_timeout(500)
     # «липкая» шапка не должна перекрывать снимок блока

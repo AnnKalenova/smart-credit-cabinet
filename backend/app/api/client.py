@@ -120,7 +120,7 @@ def match(body: MatchIn, db: Session = Depends(get_db), user: User = Depends(cli
             kr,
             as_of_today(),
             has_collateral=body.has_collateral,
-            owner_guarantee=body.owner_guarantee,
+            owner_guarantee=bool(body.owner_guarantee),
         ),
     }
 

@@ -46,27 +46,38 @@ DESCRIPTION = """
 """
 
 
-def _disable_demo_users() -> None:
-    """База могла остаться с демо-стенда: учётки с общеизвестным паролем вне демо-режима не работают."""
-    from sqlalchemy import update
+def _sync_demo_users() -> None:
+    """Демо-учётки с общеизвестным паролем работают только в демо-режиме: вне его отключаются, при возврате
+    в демо-режим включаются снова. Учётку с тем же логином, но своим паролем это не затрагивает."""
+    from sqlalchemy import select
 
     from app.db import SessionLocal
     from app.models import User
+    from app.security import verify_password
     from app.seed import DEMO_ACCOUNTS
 
-    logins = [a["login"] for a in DEMO_ACCOUNTS]
-    if not logins:
+    passwords = {a["login"]: a["password"] for a in DEMO_ACCOUNTS}
+    if not passwords:
         return
     try:
+        changed = 0
+        known: dict[tuple[str, str], bool] = {}  # у демо-учёток один хеш — пароль проверяется один раз
         with SessionLocal() as db:
-            result = db.execute(
-                update(User).where(User.login.in_(logins), User.is_active.is_(True)).values(is_active=False)
-            )
+            for user in db.scalars(select(User).where(User.login.in_(list(passwords)))):
+                key = (user.password_hash, passwords[user.login])
+                if key not in known:
+                    known[key] = verify_password(passwords[user.login], user.password_hash)
+                if known[key] and user.is_active != settings.demo_mode:
+                    user.is_active = settings.demo_mode
+                    changed += 1
             db.commit()
-        if result.rowcount:
-            log.warning("демо-режим выключен: демо-учётки отключены", extra={"count": result.rowcount})
+        if changed:
+            log.warning(
+                "демо-учётки " + ("включены" if settings.demo_mode else "отключены: демо-режим выключен"),
+                extra={"count": changed},
+            )
     except Exception:  # noqa: BLE001 — например, схема ещё не создана: старт API это не блокирует
-        log.exception("не удалось отключить демо-учётки")
+        log.exception("не удалось обновить демо-учётки")
 
 
 @asynccontextmanager
@@ -77,8 +88,7 @@ async def lifespan(app: FastAPI):
             # вне демо-режима сервис не стартует с общеизвестным секретом подписи токенов
             raise RuntimeError("Задайте собственный JWT_SECRET: значение по умолчанию допустимо только в демо-режиме")
         log.warning("используется демо-значение JWT_SECRET — смените его вне демо-стенда")
-    if not settings.demo_mode:
-        _disable_demo_users()
+    _sync_demo_users()
     log.info("API запущен", extra={"environment": settings.environment})
     yield
 
@@ -184,6 +194,9 @@ FIELD_LABELS = {
     "has_collateral": "Залог",
     "owner_guarantee": "Поручительство",
     "with_suggestions": "Подсказки",
+    "replace_current": "Заменить текущую заявку",
+    "expected_status": "Статус заявки",
+    "conditions": "Условия",
     "parent_id": "Исходная заявка",
     "fields": "Поля",
     "type": "Тип",

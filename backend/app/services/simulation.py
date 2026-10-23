@@ -339,16 +339,18 @@ class Simulator:
 
         if product.repayment_type == "ANNUITY":
             longer = [t for t in NICE_TERMS if base.term_months < t <= product.max_term and t >= product.min_term]
-            chosen = None
-            # самый короткий срок, при котором решение становится лучше; срок из предложения банка
-            # не подсказываем — его выбирают в самом предложении
-            longer = [t for t in longer if not self.matching_offer(_replace(base, term_months=t))]
-            for t in longer:
+            chosen, covered = None, False
+            for t in longer:  # самый короткий срок, при котором решение становится лучше
+                if self.matching_offer(_replace(base, term_months=t)):
+                    # этот срок уже есть в предложении банка: его выбирают там, а более длинный срок
+                    # был бы хуже готового варианта (та же сумма, но переплата больше)
+                    covered = True
+                    break
                 trial = self.run(_replace(base, term_months=t))
                 if OUTCOME_RANK[DecisionOutcome(trial["outcome"])] > OUTCOME_RANK[DecisionOutcome(current["outcome"])]:
                     chosen = t
                     break
-            if chosen is None and longer:
+            if chosen is None and not covered and longer:
                 chosen = longer[min(1, len(longer) - 1)]  # иначе — на шаг-два длиннее: платёж ниже
             if chosen:
                 candidates.append(("term", f"Срок {chosen} мес.", _replace(base, term_months=chosen)))

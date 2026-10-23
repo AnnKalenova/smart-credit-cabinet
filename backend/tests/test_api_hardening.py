@@ -139,7 +139,8 @@ def test_blank_messages_and_tiny_amounts_are_rejected(login):
     assert resp["detail"]["problems"] == ["Сообщение: не может быть пустым"]
     resp = c.call("PATCH", _url(app), json={"amount": 1e-300}, expect=422)
     assert resp["detail"]["problems"] == ["Сумма: должно быть не меньше 1"]
-    assert c.call("POST", _url(app, "/messages"), json={"text": "  Добрый день  "})["text"] == "Добрый день"
+    sent = c.prepare_and_submit("EXPRESS", "OTHER", 300_000, 6)  # переписка — по отправленной заявке
+    assert c.call("POST", _url(sent, "/messages"), json={"text": "  Добрый день  "})["text"] == "Добрый день"
 
 
 def test_framework_errors_are_in_russian(api, login):
@@ -697,17 +698,39 @@ def test_signer_does_not_ask_himself_and_consents_are_signed_once(login):
 
 
 def test_demo_users_are_disabled_outside_demo_mode(api, monkeypatch):
+    from sqlalchemy import select
     from sqlalchemy import update as sa_update
 
     import app.main as main
     from app.db import SessionLocal
     from app.models import User
+    from app.security import hash_password
 
+    with SessionLocal() as db:
+        # учётка с демо-логином, но своим паролем — это уже не демо-учётка: её не трогаем
+        db.execute(sa_update(User).where(User.login == "nikitin").values(password_hash=hash_password("свой-пароль-1")))
+        db.commit()
     try:
-        main._disable_demo_users()
+        monkeypatch.setattr(main.settings, "demo_mode", False)
+        main._sync_demo_users()
         assert api.post("/api/v1/auth/login", json={"login": "morozov", "password": "demo1234"}).status_code == 401
+        with SessionLocal() as db:
+            assert db.scalar(select(User.is_active).where(User.login == "nikitin")) is True
+        # обратно в демо-режим — демо-учётки снова работают
+        monkeypatch.setattr(main.settings, "demo_mode", True)
+        main._sync_demo_users()
+        assert api.post("/api/v1/auth/login", json={"login": "morozov", "password": "demo1234"}).status_code == 200
     finally:
         with SessionLocal() as db:
             db.execute(sa_update(User).values(is_active=True))
+            db.execute(sa_update(User).where(User.login == "nikitin").values(password_hash=hash_password("demo1234")))
             db.commit()
-    assert api.post("/api/v1/auth/login", json={"login": "morozov", "password": "demo1234"}).status_code == 200
+
+
+def test_no_chat_for_application_never_sent_to_bank(login):
+    c = login("smirnov")
+    draft = c.draft("EXPRESS", "OTHER", 300_000, 6)
+    resp = c.call("POST", _url(draft, "/messages"), json={"text": "Вопрос по заявке"}, expect=409)
+    assert resp["detail"] == "Переписка с банком откроется после отправки заявки"
+    c.call("POST", _url(draft, "/cancel"))
+    c.call("POST", _url(draft, "/messages"), json={"text": "Вопрос по заявке"}, expect=409)

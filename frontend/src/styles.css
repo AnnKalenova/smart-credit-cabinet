@@ -360,6 +360,7 @@ textarea {
 }
 .crumbs {
   display: flex;
+  align-items: center;
   gap: 8px;
   font-size: var(--fs-s);
   color: var(--faint);
@@ -500,7 +501,8 @@ hr.rule {
   white-space: nowrap;
   transition: background-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled="true"] {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -1510,6 +1512,8 @@ hr.rule {
 }
 .bars-labels span {
   flex: 1;
+  min-width: 0; /* на узком экране подпись не распирает строку */
+  overflow: hidden;
   text-align: center;
   font-size: 10px;
   color: var(--faint);
@@ -2304,6 +2308,35 @@ hr.rule {
   .icon-btn-s {
     width: 44px;
     height: 44px;
+  }
+  .check {
+    min-height: 44px;
+    align-items: center;
+  }
+  .check input {
+    margin: 0;
+  }
+  .crumbs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  .segmented button {
+    height: 44px;
+  }
+}
+
+/* самые узкие экраны (320 px): переключатель решения и подписи месяцев не распирают страницу */
+@media (max-width: 360px) {
+  .segmented {
+    display: flex;
+  }
+  .segmented button {
+    flex: 1;
+    padding: 0 8px;
+  }
+  .bars-labels span:nth-child(even) {
+    visibility: hidden;
   }
 }
 

@@ -94,6 +94,10 @@ def accept_sign_issue(c: Client, app: dict, offer_index: int = 0) -> dict:
     return final
 
 
+def pct(v: float) -> str:
+    return f"{v:g}".replace(".", ",") + "%"
+
+
 def money(v: float) -> str:
     return f"{v:,.0f}".replace(",", " ")
 
@@ -131,7 +135,8 @@ def scenario_conditions_builder(base: str) -> str:
     assert app["decision"]["outcome"] == "COUNTER_OFFER", app["decision"]
     sim = c.req("POST", f"/api/v1/applications/{app['id']}/simulation", json={})
     assert sim["result"]["outcome"] == "COUNTER_OFFER", sim["result"]
-    # условия из предложения банка конструктор узнаёт: их выбирают без новой заявки
+    # условия из предложения банка конструктор узнаёт: их выбирают без новой заявки,
+    # а более длинный срок, чем в предложении, не подсказывает — он хуже готового варианта
     offer = app["offers"][0]
     same = c.req(
         "POST",
@@ -139,10 +144,21 @@ def scenario_conditions_builder(base: str) -> str:
         json={"amount": offer["amount"], "term_months": offer["term_months"], "with_suggestions": False},
     )
     assert same["result"]["offer"]["id"] == offer["id"], same["result"]
-    best = next(s for s in sim["suggestions"] if s["result"]["outcome"] == "APPROVE")
+    assert not any(s["code"] == "term" for s in sim["suggestions"]), sim["suggestions"]
+    # срок из предложения и поручительство собственника — одобрение со ставкой ниже, чем в предложении
+    best = {"amount": offer["amount"], "term_months": offer["term_months"], "owner_guarantee": True}
+    chosen = c.req("POST", f"/api/v1/applications/{app['id']}/simulation", json={**best, "with_suggestions": False})[
+        "result"
+    ]
+    assert chosen["outcome"] == "APPROVE" and chosen["offer"] is None, chosen
+    assert chosen["rate"] < offer["rate"], (chosen["rate"], offer["rate"])
     # отказ от предложения и новая заявка — одним действием
-    new = c.req("POST", f"/api/v1/applications/{app['id']}/reapply", json={**best["params"], "replace_current": True})
-    assert new["parent_id"] == app["id"] and new["term_months"] == best["params"]["term_months"], new
+    new = c.req(
+        "POST",
+        f"/api/v1/applications/{app['id']}/reapply",
+        json={**best, "replace_current": True, "expected_status": "OFFER_READY"},
+    )
+    assert new["parent_id"] == app["id"] and new["owner_guarantee"] is True, new
     assert c.req("GET", f"/api/v1/applications/{app['id']}")["status"] == "CLIENT_DECLINED"
     ch = c.req("POST", f"/api/v1/applications/{new['id']}/sign-challenges", json={"purpose": "CONSENTS"})
     c.req(
@@ -153,10 +169,11 @@ def scenario_conditions_builder(base: str) -> str:
     new = submit_and_wait(c, new["id"])
     # решение по новой заявке — то, которое показал конструктор
     assert new["decision"]["outcome"] == "APPROVE", new["decision"]
-    p = best["params"]
+    assert new["offers"][0]["rate"] == chosen["rate"], (new["offers"][0]["rate"], chosen["rate"])
     return (
-        f"конструктор: «{best['title']}» → {best['result']['verdict'].lower()}; "
-        f"новая заявка {money(p['amount'])} ₽ / {p['term_months']} мес. одобрена автоматически"
+        f"конструктор: {money(best['amount'])} ₽ / {best['term_months']} мес. с поручительством → "
+        f"{chosen['verdict'].lower()} под {pct(chosen['rate'])} вместо {pct(offer['rate'])}; "
+        "новая заявка одобрена автоматически"
     )
 
 

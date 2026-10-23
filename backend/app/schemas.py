@@ -174,7 +174,7 @@ class MatchIn(InModel):
     amount: Money
     term_months: Term
     has_collateral: bool | None = Field(default=None, description="Залог: не указан — как требует продукт")
-    owner_guarantee: bool = Field(default=False, description="Поручительство собственника")
+    owner_guarantee: bool | None = Field(default=None, description="Поручительство собственника (по умолчанию — нет)")
 
 
 class MatchOut(BaseModel):
@@ -355,6 +355,12 @@ class ReapplyIn(ConditionsIn):
         default=False,
         description="Для заявки с предложением или на ручном рассмотрении: закрыть её (отказ от предложения "
         "или отзыв) и создать новую на этих условиях — одним действием",
+    )
+    expected_status: Code | None = Field(
+        default=None,
+        description="Статус заявки, который видел клиент. Если заявка успела измениться (например, специалист "
+        "одобрил её), — 409, и ничего не закрывается",
+        examples=["OFFER_READY"],
     )
 
 

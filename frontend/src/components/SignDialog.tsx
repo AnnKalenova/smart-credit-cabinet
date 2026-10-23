@@ -107,7 +107,6 @@ export function SignDialog({
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
             onKeyDown={(e) => e.key === "Enter" && code.length === 6 && confirm()}
-            autoFocus
           />
           <span className="field-hint">
             Код действует 5 минут.{" "}

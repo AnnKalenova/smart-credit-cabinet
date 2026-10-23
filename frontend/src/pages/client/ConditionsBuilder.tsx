@@ -2,7 +2,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { BadgeCheck, FilePlus2, RotateCcw, Send, Sparkles, UserRoundCheck } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api } from "../../api/client";
+import { ApiError, api } from "../../api/client";
 import type { Application, Conditions, SimOutcome, SimProduct, SimResult, Simulation } from "../../api/types";
 import { AmountInput, Modal } from "../../components/ui";
 import { dateTime, formatInputAmount, money, moneyShort, parseAmount, pct } from "../../lib/format";
@@ -190,6 +190,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
   const [amountText, setAmountText] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+  const resultRef = useRef<HTMLDivElement>(null);
 
   // первый запрос — без параметров: сервер отвечает условиями заявки и границами продуктов
   const initial = useQuery({
@@ -234,7 +235,21 @@ export function ConditionsBuilder({ app }: { app: Application }) {
   const changed = Boolean(cond && base && !same(cond, base));
   const live = app.next_application?.is_live ? app.next_application : null;
 
-  if (initial.isError) return null; // конструктор недоступен (например, заявку не успели оценить)
+  if (initial.isError) {
+    // 404 и 409 — конструктор для этой заявки недоступен (например, решение принял специалист): не показываем
+    if (initial.error instanceof ApiError && [403, 404, 409].includes(initial.error.status)) return null;
+    return (
+      <section className="panel" aria-labelledby="builder-title">
+        <h2 id="builder-title">Конструктор условий</h2>
+        <div className="row-wrap" style={{ marginTop: 10 }}>
+          <span className="small muted">Не удалось загрузить расчёт — сервис не ответил.</span>
+          <button className="btn btn-ghost btn-s" onClick={() => void initial.refetch()}>
+            <RotateCcw size={16} /> Повторить
+          </button>
+        </div>
+      </section>
+    );
+  }
   if (!initial.data || !cond || !product) return null;
   // стоп-фактор (ликвидация, просрочки) условиями не исправить — объяснение уже есть выше
   if (initial.data.result.outcome === "DECLINE" && !initial.data.result.fixable) return null;
@@ -275,6 +290,12 @@ export function ConditionsBuilder({ app }: { app: Application }) {
     setCond(params);
     setAmountText(formatInputAmount(params.amount));
   };
+  const applySuggestion = (params: Conditions) => {
+    if (stale) return;
+    apply(params);
+    // подсказки пересчитываются, нажатая кнопка может исчезнуть — переводим фокус на решение банка
+    window.setTimeout(() => resultRef.current?.focus({ preventScroll: true }), 0);
+  };
 
   // кто и как подаёт новую заявку из текущего статуса
   const status = app.status;
@@ -293,6 +314,8 @@ export function ConditionsBuilder({ app }: { app: Application }) {
           : null
         : null;
   const canPropose = !app.permissions.can_sign && REPLACEABLE.includes(status);
+  const sent = !app.permissions.can_sign ? app.proposed_conditions : null;
+  const alreadySent = Boolean(sent && same(sent.conditions, cond));
   const willDecline = r?.outcome === "DECLINE";
   const sameAsNow = !changed && !CLOSED.includes(status);
   const blocked = busy || stale || sim.isError || !r || willDecline || sameAsNow;
@@ -308,7 +331,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
       // отказ от предложения или отзыв и новая заявка — одной операцией: если что-то не так, текущая заявка не меняется
       const created = await api<Application>(`/api/v1/applications/${app.id}/reapply`, {
         method: "POST",
-        json: { ...cond, replace_current: mode !== "reapply" },
+        json: { ...cond, replace_current: mode !== "reapply", expected_status: status },
       });
       toast.ok(`Создали заявку № ${created.number}: проверьте данные, подпишите согласия и отправьте`);
       refreshApp();
@@ -392,11 +415,13 @@ export function ConditionsBuilder({ app }: { app: Application }) {
   } else if (canPropose) {
     action = (
       <div className="row-wrap">
-        <button className="btn btn-primary" disabled={blocked} onClick={propose}>
+        <button className="btn btn-primary" disabled={blocked || alreadySent} onClick={propose}>
           <Send size={18} /> Передать руководителю
         </button>
         <span className="small muted">
-          Подать заявку на других условиях может {signers}. Передадим выбранные условия — они откроются в этом конструкторе.
+          {alreadySent
+            ? `Эти условия уже переданы: ${signers}.`
+            : `Подать заявку на других условиях может ${signers}. Передадим выбранные условия — они откроются в этом конструкторе.`}
         </span>
       </div>
     );
@@ -417,6 +442,15 @@ export function ConditionsBuilder({ app }: { app: Application }) {
           </button>
         )}
       </div>
+
+      {sent && (
+        <div className="callout info" style={{ marginTop: 16 }}>
+          <Send size={18} />
+          <span>
+            {sent.by ?? "Сотрудник"} передал(а) руководителю условия: {sent.text} ({dateTime(sent.at)}).
+          </span>
+        </div>
+      )}
 
       {proposal && (
         <div className="callout info" style={{ marginTop: 16 }}>
@@ -530,7 +564,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
           </div>
 
           <div className="builder-result">
-            <div className="result-caption" aria-live="polite">
+            <div className="result-caption" aria-live="polite" ref={resultRef} tabIndex={-1}>
               <span>Решение банка на этих условиях</span>
               {pending && !sim.isError && (
                 <span className="recalc">
@@ -566,7 +600,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
                         <br />
                         <span>{s.effect}</span>
                       </div>
-                      <button className="btn btn-ghost btn-s" disabled={stale} onClick={() => apply(s.params)}>
+                      <button className="btn btn-ghost btn-s" aria-disabled={stale} onClick={() => applySuggestion(s.params)}>
                         Применить
                       </button>
                     </div>
