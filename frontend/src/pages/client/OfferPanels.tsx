@@ -7,6 +7,7 @@ import type { Application, Contract, Offer, ScheduleRow } from "../../api/types"
 import { SignDialog } from "../../components/SignDialog";
 import { Modal } from "../../components/ui";
 import { date, money, pct } from "../../lib/format";
+import { useSingleFlight } from "../../lib/once";
 import { useToast } from "../../lib/toast";
 import { useRefreshApp } from "./DocumentsBlock";
 
@@ -94,7 +95,7 @@ export function OfferTicket({
         </div>
         <div>
           <div className="k">{revolving ? "Срок лимита" : "Срок"}</div>
-          <div className="big">{offer.term_months} мес.</div>
+          <div className="big">{offer.term_months}&nbsp;мес.</div>
         </div>
         <div>
           <div className="k">Ставка</div>
@@ -195,6 +196,7 @@ export function DecisionExplain({ app }: { app: Application }) {
 function AskSigner({ app, what }: { app: Application; what: string }) {
   const toast = useToast();
   const refresh = useRefreshApp(app.id);
+  const once = useSingleFlight();
   const [busy, setBusy] = useState(false);
   const ask = async () => {
     setBusy(true);
@@ -216,7 +218,7 @@ function AskSigner({ app, what }: { app: Application; what: string }) {
           {what} может: {app.permissions.signers.join(", ")}.
         </span>
         <div>
-          <button className="btn btn-primary btn-s" disabled={busy} onClick={ask}>
+          <button className="btn btn-primary btn-s" disabled={busy} onClick={() => once(ask)}>
             Передать на подпись
           </button>
         </div>
@@ -312,6 +314,7 @@ export function OfferChoice({ app }: { app: Application }) {
 export function SigningPanel({ app }: { app: Application }) {
   const toast = useToast();
   const refresh = useRefreshApp(app.id);
+  const once = useSingleFlight();
   const [signing, setSigning] = useState(false);
   const [preview, setPreview] = useState(false);
   const contract = useQuery({ queryKey: ["contract", app.id], queryFn: () => api<Contract>(`/api/v1/applications/${app.id}/contract`) });
@@ -363,7 +366,7 @@ export function SigningPanel({ app }: { app: Application }) {
           {!app.permissions.can_sign && <AskSigner app={app} what="Подписать кредитный договор" />}
           {app.permissions.can_sign && (
             <div>
-              <button className="btn-link small" style={{ color: "var(--ink-2)" }} onClick={back}>
+              <button className="btn-link small" style={{ color: "var(--ink-2)" }} onClick={() => once(back)}>
                 <Undo2 size={14} style={{ verticalAlign: -2 }} /> Вернуться к выбору условий
               </button>
             </div>
@@ -371,7 +374,7 @@ export function SigningPanel({ app }: { app: Application }) {
         </div>
       </section>
       {preview && contract.data && (
-        <Modal title={`Кредитный договор № ${contract.data.contract_number}`} onClose={() => setPreview(false)} wide>
+        <Modal title={`Кредитный договор №\u00a0${contract.data.contract_number}`} onClose={() => setPreview(false)} wide>
           <div className="stack">
             <dl className="kv">
               <dt>Заёмщик</dt>
@@ -383,7 +386,7 @@ export function SigningPanel({ app }: { app: Application }) {
               <dt>Сумма</dt>
               <dd>{money(contract.data.offer.amount)}</dd>
               <dt>Срок</dt>
-              <dd>{contract.data.offer.term_months} мес.</dd>
+              <dd>{contract.data.offer.term_months}&nbsp;мес.</dd>
               <dt>Процентная ставка</dt>
               <dd>{pct(contract.data.offer.rate)} годовых</dd>
               <dt>Зачисление</dt>
@@ -443,7 +446,7 @@ export function IssuedPanel({ app }: { app: Application }) {
         <dt>Ставка</dt>
         <dd>{pct(loan.rate)} годовых</dd>
         <dt>Срок</dt>
-        <dd>{loan.term_months} мес.</dd>
+        <dd>{loan.term_months}&nbsp;мес.</dd>
       </dl>
       <div style={{ marginTop: 16 }}>
         <Link to={`/c/loans/${loan.id}`} className="btn btn-primary">

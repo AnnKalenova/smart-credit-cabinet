@@ -9,6 +9,8 @@
 		Strict-Transport-Security "max-age=31536000"
 		-Server
 	}
+	# сжатие здесь: nginx за прокси не сжимает ответы, и без этого скрипты интерфейса уходят в 3 раза тяжелее
+	encode zstd gzip
 	reverse_proxy web:80
 }
 

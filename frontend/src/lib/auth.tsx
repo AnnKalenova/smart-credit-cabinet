@@ -1,11 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, getToken, setToken, setUnauthorizedHandler } from "../api/client";
+import { ApiError, api, getToken, setToken, setUnauthorizedHandler } from "../api/client";
 import type { CompanyBrief, Dictionaries, Me } from "../api/types";
 
 interface AuthState {
   me: Me | null;
   loading: boolean;
+  /** вход сохранён, но банк не ответил (сеть, сбой сервера) — это не выход из кабинета */
+  unreachable: boolean;
+  /** в этой вкладке уже входили: после обычного выхода страница входа не возвращает на прежний адрес */
+  hadSession: boolean;
+  retry: () => void;
   company: CompanyBrief | null;
   setCompanyId: (id: string) => void;
   login: (login: string, password: string) => Promise<Me>;
@@ -15,6 +20,23 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 const COMPANY_KEY = "scc.company";
+const EXPIRED_KEY = "scc.expired";
+
+/** Сессия закончилась сама (ответ 401), а не клиент вышел: страница входа скажет об этом один раз. */
+export function sessionExpired(): boolean {
+  try {
+    return window.sessionStorage.getItem(EXPIRED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+export function forgetSessionExpired(): void {
+  try {
+    window.sessionStorage.removeItem(EXPIRED_KEY);
+  } catch {
+    /* не критично */
+  }
+}
 
 function readCompany(): string | null {
   try {
@@ -27,13 +49,15 @@ function readCompany(): string | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [hasToken, setHasToken] = useState(Boolean(getToken()));
+  const [hadSession, setHadSession] = useState(hasToken);
   const [companyId, setCompanyIdState] = useState<string | null>(readCompany());
 
   const meQuery = useQuery({
     queryKey: ["me"],
     queryFn: () => api<Me>("/api/v1/auth/me"),
     enabled: hasToken,
-    retry: false,
+    // сбой сети или сервера — повторяем; на 401 api() сам сбрасывает вход
+    retry: (count, e) => !(e instanceof ApiError && e.status === 401) && count < 2,
   });
   const dictQuery = useQuery({
     queryKey: ["dict"],
@@ -49,7 +73,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [qc]);
 
   useEffect(() => {
-    setUnauthorizedHandler(logout);
+    setUnauthorizedHandler(() => {
+      try {
+        window.sessionStorage.setItem(EXPIRED_KEY, "1");
+      } catch {
+        /* не критично */
+      }
+      logout();
+    });
   }, [logout]);
 
   const login = useCallback(
@@ -61,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(res.access_token);
       qc.clear();
       setHasToken(true);
+      setHadSession(true);
       const me = await qc.fetchQuery({ queryKey: ["me"], queryFn: () => api<Me>("/api/v1/auth/me") });
       return me;
     },
@@ -80,16 +112,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const me = hasToken ? (meQuery.data ?? null) : null;
     const companies = me?.companies ?? [];
     const company = companies.find((c) => c.id === companyId) ?? companies[0] ?? null;
+    const authError = meQuery.error instanceof ApiError && meQuery.error.status === 401;
     return {
       me,
       loading: hasToken && meQuery.isLoading,
+      // только когда данных о входе ещё нет: если фоновое обновление не прошло, открытая страница с правками остаётся на месте
+      unreachable: hasToken && !meQuery.data && meQuery.isError && !authError,
+      hadSession,
+      retry: () => void meQuery.refetch(),
       company,
       setCompanyId,
       login,
       logout,
       dict: dictQuery.data ?? null,
     };
-  }, [hasToken, meQuery.data, meQuery.isLoading, companyId, setCompanyId, login, logout, dictQuery.data]);
+  }, [hasToken, hadSession, meQuery, companyId, setCompanyId, login, logout, dictQuery.data]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

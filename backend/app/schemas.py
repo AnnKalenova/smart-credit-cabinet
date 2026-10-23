@@ -45,6 +45,13 @@ def _not_blank(value: str | None) -> str | None:
     return value
 
 
+def _blank_to_none(value: str | None) -> str | None:
+    """Необязательный текст: пробелы по краям убираются, текст из одних пробелов — то же, что пустой."""
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 # --------------------------------------------------------------------------- auth
 
 
@@ -505,8 +512,9 @@ class BankDecisionIn(InModel):
     offers: list[BankOfferIn] = Field(default=[], max_length=3)
     info_items: list[BankInfoItemIn] = Field(default=[], max_length=10)
     reason: str | None = Field(default=None, max_length=500)
-    message_to_client: str | None = Field(default=None, max_length=4000)
-    comment_internal: str | None = Field(default=None, max_length=4000)
+    # сообщение из одних пробелов клиенту не уходит: пустой пузырь в переписке и пустое «Сообщение специалиста» ни к чему
+    message_to_client: Annotated[str | None, Field(max_length=4000), AfterValidator(_blank_to_none)] = None
+    comment_internal: Annotated[str | None, Field(max_length=4000), AfterValidator(_blank_to_none)] = None
 
 
 class SettingOut(BaseModel):

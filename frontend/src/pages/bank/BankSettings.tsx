@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { Product, SettingRow } from "../../api/types";
-import { Field, Loader } from "../../components/ui";
+import { Field, LoadError, Loader } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
 import { dateTime, money, pct } from "../../lib/format";
+import { useSingleFlight } from "../../lib/once";
 import { useToast } from "../../lib/toast";
 
 const POLICY = [
@@ -22,8 +23,11 @@ function KeyRate({ row, editable }: { row: SettingRow; editable: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [value, setValue] = useState(String(row.value).replace(".", ","));
+  const once = useSingleFlight();
+  const text = value.replace(/[\s%]/g, "").replace(",", ".");
+  const valid = /^\d+(\.\d+)?$/.test(text);
   const save = useMutation({
-    mutationFn: () => api(`/api/v1/bank/settings/key_rate`, { method: "PUT", json: { value: Number(value.replace(",", ".")) } }),
+    mutationFn: () => api(`/api/v1/bank/settings/key_rate`, { method: "PUT", json: { value: Number(text) } }),
     onSuccess: () => {
       toast.ok("Ключевая ставка обновлена — новые предложения будут рассчитаны по ней");
       void qc.invalidateQueries({ queryKey: ["settings"] });
@@ -32,14 +36,18 @@ function KeyRate({ row, editable }: { row: SettingRow; editable: boolean }) {
     onError: (e) => toast.error(e),
   });
   return (
-    <div className="row" style={{ alignItems: "flex-end" }}>
-      <div style={{ width: 220 }}>
-        <Field label="Ставка, % годовых">
-          <input className="input input-money" value={value} readOnly={!editable} onChange={(e) => setValue(e.target.value)} />
+    <div className="row-wrap" style={{ alignItems: "flex-end", gap: 12 }}>
+      <div style={{ width: 160 }}>
+        <Field label="Ставка, % годовых" error={editable && !valid ? "Укажите число, например 16,5" : undefined}>
+          <input className="input input-money" value={value} readOnly={!editable} onChange={(e) => setValue(e.target.value)} inputMode="decimal" />
         </Field>
       </div>
       {editable && (
-        <button className="btn btn-primary" disabled={save.isPending} onClick={() => save.mutate()}>
+        <button
+          className="btn btn-primary"
+          disabled={save.isPending || !valid}
+          onClick={() => once(() => save.mutateAsync().catch(() => undefined))}
+        >
           Сохранить
         </button>
       )}
@@ -71,7 +79,15 @@ export function BankSettings() {
       <div className="stack">
         <section className="panel">
           <h2>Ключевая ставка</h2>
-          <div style={{ marginTop: 14 }}>{keyRate ? <KeyRate row={keyRate} editable={editable} /> : <Loader />}</div>
+          <div style={{ marginTop: 14 }}>
+            {keyRate ? (
+              <KeyRate row={keyRate} editable={editable} />
+            ) : settings.isError ? (
+              <LoadError title="Не удалось загрузить ставку" onRetry={() => void settings.refetch()} />
+            ) : (
+              <Loader />
+            )}
+          </div>
           {note && <p className="small muted" style={{ marginTop: 10 }}>{String(note.value)}</p>}
         </section>
         <section className="panel">
@@ -90,6 +106,16 @@ export function BankSettings() {
                 </tr>
               </thead>
               <tbody>
+                {products.isError && !products.data && (
+                  <tr>
+                    <td colSpan={6} className="muted">
+                      Не удалось загрузить продукты.{" "}
+                      <button className="btn-link" onClick={() => void products.refetch()}>
+                        Повторить
+                      </button>
+                    </td>
+                  </tr>
+                )}
                 {products.data?.map((p) => (
                   <tr key={p.code}>
                     <td>

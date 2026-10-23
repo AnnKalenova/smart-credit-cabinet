@@ -3,6 +3,16 @@ import { useEffect, useLayoutEffect, useRef, useState, type InputHTMLAttributes,
 import type { AppEvent, StatusView, TurnoverPoint } from "../api/types";
 import { dateTime, formatInputAmount, groupDigits, money, monthShort, moneyShort } from "../lib/format";
 
+/** Переписка открывается на последних сообщениях и прокручивается к каждому новому. */
+export function useScrollToEnd<T extends HTMLElement>(count: number) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [count]);
+  return ref;
+}
+
 export const PROCESSING = new Set(["SUBMITTED", "PRECHECK", "ENRICHMENT", "SCORING", "DECISION", "MANUAL_REVIEW", "DISBURSEMENT"]);
 
 // цвет статуса в рабочем месте банка: отказ банка и истёкшее предложение — красным, решения клиента — серым
@@ -65,12 +75,12 @@ export function Conveyor({
     <section className="conveyor" aria-label="Ход рассмотрения заявки">
       <div className="conveyor-top">
         <div>
-          <div className="number">
-            Заявка № {number}, {title}
-          </div>
+          <h1 className="number">
+            Заявка №&nbsp;{number}, {title}
+          </h1>
           <div className="amount">
             {money(amount)}
-            <small>на {term} мес.</small>
+            <small>на {term}&nbsp;мес.</small>
           </div>
         </div>
         {aside}
@@ -270,6 +280,19 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
     <div className="empty">
       <h3>{title}</h3>
       {children}
+    </div>
+  );
+}
+
+/** Данные не загрузились: говорим об этом и даём повторить, а не крутим загрузку бесконечно */
+export function LoadError({ onRetry, title = "Не удалось загрузить данные" }: { onRetry: () => void; title?: string }) {
+  return (
+    <div className="empty" role="alert">
+      <h3>{title}</h3>
+      <p className="small">Проверьте связь и попробуйте ещё раз.</p>
+      <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={onRetry}>
+        Повторить
+      </button>
     </div>
   );
 }

@@ -101,7 +101,10 @@ function DocRow({ app, doc, editable }: { app: Application; doc: DocumentInfo; e
   return (
     <div className="row small" style={{ padding: "6px 0" }}>
       <FileText size={16} className="faint" />
-      <button className="btn-link" onClick={() => download(`/api/v1/applications/${app.id}/documents/${doc.id}`, doc.file_name)}>
+      <button
+        className="btn-link doc-name"
+        onClick={() => download(`/api/v1/applications/${app.id}/documents/${doc.id}`, doc.file_name).catch((e) => toast.error(e))}
+      >
         {doc.file_name}
       </button>
       <span className="faint">{fileSize(doc.size_bytes)}</span>
@@ -116,31 +119,39 @@ function DocRow({ app, doc, editable }: { app: Application; doc: DocumentInfo; e
 }
 
 /** Обязательные документы (по правилам продукта) + любые дополнительные.
- *  newSince — дата запроса банка: запрошенный документ засчитывается, только если он приложен после запроса. */
+ *  requested — документы из запроса банка: тогда показываются только они, под названиями из запроса;
+ *  newSince — дата запроса: запрошенный документ засчитывается, только если он приложен после запроса. */
 export function DocumentsBlock({
   app,
   editable,
-  extraTypes = [],
+  requested,
   newSince,
 }: {
   app: Application;
   editable: boolean;
-  extraTypes?: string[];
+  requested?: { doc_type: string; label: string }[];
   newSince?: string;
 }) {
-  const { dict } = useAuth();
   const required = app.required_documents;
-  const requiredTypes = new Set([...required.map((r) => r.doc_type), ...extraTypes]);
-  const others = app.documents.filter((d) => !requiredTypes.has(d.doc_type));
-  const types = [...required.map((r) => ({ doc_type: r.doc_type, label: r.label })), ...extraTypes.filter((t) => !required.some((r) => r.doc_type === t)).map((t) => ({ doc_type: t, label: dict?.doc_types[t] ?? t }))];
+  const requestedTypes = (requested ?? []).map((r) => r.doc_type);
+  const types = requested ?? required.map((r) => ({ doc_type: r.doc_type, label: r.label }));
+  const shownTypes = new Set(types.map((t) => t.doc_type));
+  // в ответе на запрос банка — запрошенные документы и, если банк не просил «другой документ», место для дополнительных;
+  // документы, приложенные к заявке раньше, к запросу не относятся
+  const otherRequested = requestedTypes.includes("OTHER");
+  const others = requested
+    ? otherRequested
+      ? []
+      : app.documents.filter((d) => d.doc_type === "OTHER")
+    : app.documents.filter((d) => !shownTypes.has(d.doc_type));
 
   return (
     <div className="stack">
       {types.length === 0 && <p className="small muted">Для этой заявки документы не нужны — банк оценит бизнес по оборотам на счёте.</p>}
       {types.map((r) => {
         const docs = app.documents.filter((d) => d.doc_type === r.doc_type);
-        const requested = newSince !== undefined && extraTypes.includes(r.doc_type);
-        const fresh = requested ? docs.filter((d) => Date.parse(d.uploaded_at) >= Date.parse(newSince)) : docs;
+        const isRequested = newSince !== undefined && requestedTypes.includes(r.doc_type);
+        const fresh = isRequested ? docs.filter((d) => Date.parse(d.uploaded_at) >= Date.parse(newSince)) : docs;
         return (
           <div key={r.doc_type} className="panel-flat" style={{ padding: "12px 14px" }}>
             <div className="row-wrap">
@@ -149,7 +160,7 @@ export function DocumentsBlock({
               <span className="spacer" />
               <UploadButtons app={app} docType={r.doc_type} editable={editable} />
             </div>
-            {requested && docs.length > 0 && fresh.length === 0 && (
+            {isRequested && docs.length > 0 && fresh.length === 0 && (
               <p className="xs muted" style={{ margin: "6px 0 0 26px" }}>
                 Банк запросил этот документ после проверки — приложите актуальную версию.
               </p>
@@ -160,7 +171,7 @@ export function DocumentsBlock({
           </div>
         );
       })}
-      {(others.length > 0 || editable) && (
+      {!otherRequested && (others.length > 0 || editable) && (
         <div>
           <div className="row">
             <span className="small muted">Другие документы</span>

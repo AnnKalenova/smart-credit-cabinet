@@ -101,6 +101,8 @@ def test_decline_flow_and_reapply(login):
     app = u.prepare_and_submit("EXPRESS", "WORKING_CAPITAL", 2_000_000, 24)
     assert app["status"] == "DECLINED"
     assert any("ликвидации" in r for r in app["decision"]["reasons"])
+    # выписка показала ликвидацию: «предварительно одобрено» на главной больше не обещается
+    assert u.call("GET", f"/api/v1/companies/{u.company_id}")["preapproved"] is None
     assert app["permissions"]["can_reapply"] is True
     new = u.call("POST", _url(app, "/reapply"))
     assert new["status"] == "DRAFT" and new["parent_id"] == app["id"] and new["amount"] == 2_000_000
@@ -445,6 +447,11 @@ def test_bank_registry_filters(login):
     assert issued and all(r["status"] == "ISSUED" for r in issued)
     found = a.call("GET", "/api/v1/bank/applications", params={"scope": "all", "q": "Северный"})
     assert found and all("Северный" in r["company_name"] for r in found)
+    # «%» и «_» — обычные символы, а не шаблон «всё подряд»
+    for wildcard in ("%", "_", "Север%хлеб"):
+        assert a.call("GET", "/api/v1/bank/applications", params={"scope": "all", "q": wildcard}) == []
+    # пустой запрос — без фильтра
+    assert a.call("GET", "/api/v1/bank/applications", params={"scope": "all", "q": "   "})
     mine = a.call("GET", "/api/v1/bank/applications", params={"scope": "mine"})
     assert all(r["assignee"] == "Волкова Ирина Андреевна" for r in mine)
 

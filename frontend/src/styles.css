@@ -339,6 +339,41 @@ textarea {
   height: 40px;
   width: 220px;
 }
+/* подписи разделов и имя в шапке не переносятся: при нехватке места шапка перестраивается в две строки */
+.topnav a,
+.user-chip .who span {
+  white-space: nowrap;
+}
+/* имя и должность обрезаются многоточием, только если шапке действительно не хватает места */
+.topbar-right,
+.user-chip,
+.user-chip .who {
+  min-width: 0;
+}
+.user-chip .who span {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* планшет: в одну строку шапка не помещается — знак, имя и действия сверху, разделы второй строкой */
+@media (max-width: 1040px) {
+  .topbar-inner {
+    padding: 6px 24px 0;
+    gap: 0 16px;
+    height: auto;
+    flex-wrap: wrap;
+  }
+  .topbar-right {
+    min-height: 56px;
+  }
+  .topnav {
+    order: 3;
+    flex: 1 0 100%;
+    overflow-x: auto;
+    gap: 24px;
+    height: 46px;
+  }
+}
 
 .page {
   max-width: 1232px;
@@ -357,6 +392,15 @@ textarea {
 }
 .page-head p {
   margin-top: 8px;
+}
+/* кнопка или поиск справа от заголовка не сжимаются: если места не хватает, переходят на строку ниже */
+@media (min-width: 761px) {
+  .page-head {
+    flex-wrap: wrap;
+  }
+  .page-head > :first-child {
+    flex: 1 1 420px;
+  }
 }
 .crumbs {
   display: flex;
@@ -838,6 +882,9 @@ hr.rule {
 .conveyor .number {
   color: rgba(255, 255, 255, 0.64);
   font-size: var(--fs-s);
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.5;
 }
 .conveyor .amount {
   font-size: var(--fs-3xl);
@@ -857,7 +904,7 @@ hr.rule {
 .track {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-top: 32px;
 }
 .track::before {
@@ -1114,6 +1161,102 @@ hr.rule {
 .panel-table .table th:last-child,
 .panel-table .table td:last-child {
   padding-right: 24px;
+}
+.q-link {
+  font-weight: 700;
+  color: inherit;
+  text-decoration: none;
+}
+.q-link:hover {
+  text-decoration: underline;
+}
+/* колонка клиента не сжимается в узкую полоску из причин ручного рассмотрения */
+.queue-table .q-client {
+  min-width: 240px;
+}
+/* планшет и телефон: строка очереди — карточка (клиент и сумма, продукт и статус, номер и срок, рейтинг и специалист) */
+@media (max-width: 1040px) {
+  .panel-table .queue-table,
+  .queue-table tbody {
+    display: block;
+    min-width: 0;
+  }
+  .queue-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .queue-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "client amount"
+      "product status"
+      "num due"
+      "grade assignee";
+    gap: 10px 16px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--line);
+  }
+  .queue-table tbody tr:first-child {
+    border-top: 0;
+  }
+  .panel-table .queue-table td,
+  .panel-table .queue-table td:first-child,
+  .panel-table .queue-table td:last-child {
+    display: block;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+  .queue-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: var(--fs-xs);
+    color: var(--faint);
+  }
+  .queue-table .q-client {
+    grid-area: client;
+    font-weight: 600;
+  }
+  .queue-table .q-client .xs {
+    font-weight: 400;
+  }
+  .queue-table .q-amount {
+    grid-area: amount;
+    font-weight: 700;
+  }
+  .queue-table .q-product {
+    grid-area: product;
+  }
+  .queue-table .q-status {
+    grid-area: status;
+    text-align: right;
+  }
+  .queue-table .q-status .xs {
+    margin-left: auto;
+  }
+  .queue-table .q-num {
+    grid-area: num;
+  }
+  .queue-table .q-due {
+    grid-area: due;
+    text-align: right;
+  }
+  .queue-table .q-grade {
+    grid-area: grade;
+  }
+  .queue-table .q-assignee {
+    grid-area: assignee;
+    text-align: right;
+  }
+}
+@media (max-width: 760px) {
+  .queue-table tr {
+    padding: 16px;
+  }
 }
 
 .kv {
@@ -1744,21 +1887,35 @@ hr.rule {
 .verdict.positive {
   box-shadow: inset 0 0 0 2px var(--positive-graphic);
 }
+/* цифры решения: в две колонки, а в узкой карточке — одна под другой */
+.verdict {
+  container-type: inline-size;
+}
 .figures {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px 16px;
+}
+@container (min-width: 300px) {
+  .figures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.figures > div {
+  container-type: inline-size;
 }
 .figures .k {
   font-size: var(--fs-xs);
   color: var(--faint);
 }
+/* сумма до 100 млн ₽ помещается в колонку: шрифт чуть уменьшается, если колонка узкая */
 .figures .v {
-  font-size: var(--fs-xl);
+  font-size: min(var(--fs-xl), 13.5cqi);
   font-weight: 700;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
+  white-space: nowrap;
 }
 .meter {
   position: relative;
@@ -1860,7 +2017,7 @@ hr.rule {
   background: var(--accent-strong);
 }
 .login-side h1 {
-  font-size: 44px;
+  font-size: clamp(36px, 1.5vw + 22px, 52px);
   line-height: 1.08;
   letter-spacing: -0.03em;
   max-width: 12em;
@@ -1870,7 +2027,7 @@ hr.rule {
 .login-side-in > p {
   color: #fff;
   max-width: 46ch;
-  font-size: var(--fs-l);
+  font-size: clamp(17px, 0.4vw + 12px, 20px);
   line-height: 1.5;
 }
 
@@ -2080,15 +2237,6 @@ hr.rule {
     transform: translateY(12px);
   }
 }
-/* большой экран: заголовок крупнее */
-@media (min-width: 1600px) and (min-height: 860px) {
-  .login-side h1 {
-    font-size: 52px;
-  }
-  .login-side-in > p {
-    font-size: 20px;
-  }
-}
 /* ноутбук поуже: поля панели меньше, чтобы путь и карточка поместились рядом */
 @media (max-width: 1365px) {
   .login-side-in {
@@ -2096,7 +2244,7 @@ hr.rule {
   }
 }
 /* узкая панель: только карточка решения */
-@media (max-width: 1180px) {
+@media (max-width: 1280px) {
   .login-show {
     grid-template-columns: minmax(0, 420px);
   }
@@ -2106,6 +2254,34 @@ hr.rule {
   }
   .login-sample {
     animation-delay: 0.15s;
+  }
+}
+/* планшет: для двух колонок узко — красная панель сверху (текст и карточка решения рядом), вход под ней */
+@media (min-width: 761px) and (max-width: 1040px) {
+  .login {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .login-side-in {
+    position: static;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+    align-items: start;
+    gap: 16px 40px;
+  }
+  .login-side-in > .brand {
+    grid-column: 1 / -1;
+  }
+  .login-side h1 {
+    margin-top: 12px;
+  }
+  .login-show {
+    grid-column: 2;
+    grid-row: 2 / span 2;
+    margin: 12px 0 0;
+  }
+  .login-main {
+    max-width: none;
   }
 }
 /* невысокое окно: плотнее по вертикали и без пояснения к решению, чтобы панель поместилась в экран */
@@ -2135,6 +2311,9 @@ hr.rule {
 }
 .login-main h2 {
   font-size: var(--fs-2xl);
+}
+.login-form-title {
+  display: none;
 }
 .accounts {
   display: grid;
@@ -2291,8 +2470,15 @@ hr.rule {
   overflow: auto;
   padding-right: 4px;
 }
+/* длинное имя файла без пробелов переносится, а не растягивает страницу и не уводит кнопку удаления за край */
+.doc-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
 .bubble {
   max-width: 88%;
+  overflow-wrap: anywhere;
   padding: 10px 14px;
   border-radius: 16px 16px 16px 4px;
   font-size: var(--fs-s);
@@ -2352,6 +2538,10 @@ hr.rule {
   }
 }
 @media (max-width: 760px) {
+  /* шапка на телефоне выше (две строки): прокрутка к якорю не прячет заголовок под ней */
+  html {
+    scroll-padding-top: 112px;
+  }
   .login {
     grid-template-columns: 1fr;
   }
@@ -2364,7 +2554,7 @@ hr.rule {
     min-height: 0;
   }
   .login-side h1 {
-    font-size: 32px;
+    font-size: 30px;
     margin-top: 8px;
   }
   .login-side-in > p {
@@ -2372,6 +2562,13 @@ hr.rule {
   }
   .login-show {
     display: none;
+  }
+  /* жюри и гости входят в один клик: на телефоне демо-учётки — сразу под заголовком, форма — ниже */
+  .login-main > .login-form {
+    order: 2;
+  }
+  .login-form-title {
+    display: block;
   }
   .accounts {
     grid-template-columns: minmax(0, 1fr);
@@ -2425,6 +2622,7 @@ hr.rule {
   }
   .topbar-right {
     gap: 2px;
+    min-height: 0;
   }
   .topbar .company-select {
     width: 140px;
@@ -2438,11 +2636,11 @@ hr.rule {
   .user-chip .who {
     display: none;
   }
-  /* широкие таблицы на телефоне прокручиваются, а не сжимают колонки до нечитаемых */
-  .table-wrap .table {
+  /* широкие таблицы на телефоне прокручиваются, а не сжимают колонки до нечитаемых; очередь — карточками по ширине экрана */
+  .table-wrap .table:not(.queue-table) {
     min-width: 560px;
   }
-  .panel-table .table {
+  .panel-table .table:not(.queue-table) {
     min-width: 820px;
   }
   .list-app {
@@ -2542,7 +2740,7 @@ hr.rule {
     font-size: 40px;
   }
   .figures .v {
-    font-size: var(--fs-l);
+    font-size: min(var(--fs-l), 13.5cqi);
   }
   .toasts {
     left: 16px;
@@ -2598,7 +2796,48 @@ hr.rule {
 }
 
 /* самые узкие экраны (320 px): переключатель решения и подписи месяцев не распирают страницу */
+/* маленькие телефоны: длинные слова переносятся, сумма в предложении — на всю ширину билета */
+@media (max-width: 480px) {
+  /* заголовок карточки и пометка рядом с ним не сжимаются в узкие колонки, а переносятся строкой ниже */
+  .panel-head {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 400px) {
+  /* вход: короткая красная шапка, чтобы вход в один клик был виден без прокрутки */
+  .login-side h1 {
+    font-size: 26px;
+  }
+  .login-side-in > p {
+    display: none;
+  }
+  .purpose b {
+    hyphens: auto;
+    overflow-wrap: anywhere;
+  }
+  .ticket-body > :first-child {
+    grid-column: 1 / -1;
+  }
+  .ticket-head {
+    flex-wrap: wrap;
+  }
+  .kpis .chip {
+    white-space: normal;
+    height: auto;
+    min-height: 28px;
+    padding-block: 4px;
+  }
+}
 @media (max-width: 360px) {
+  /* знак, уведомления и выход помещаются в одну строку и на экране 320 px */
+  .topbar-inner {
+    padding-inline: 12px;
+    gap: 0 8px;
+  }
+  .brand {
+    gap: 8px;
+    font-size: 15px;
+  }
   .segmented {
     display: flex;
   }
@@ -2630,15 +2869,32 @@ hr.rule {
   .modal-foot .btn {
     width: 100%;
   }
-  /* на узком экране подписан только текущий шаг: остальные видны по отметкам на линии */
+  /* на узком экране подписан только текущий шаг — под своей отметкой (у крайних — от края дорожки),
+     остальные видны по отметкам на линии */
+  .track {
+    padding-bottom: 22px;
+  }
   .station span.label {
-    visibility: hidden;
+    display: none;
   }
   .station.current span.label,
   .station.failed span.label,
   .station.stopped span.label {
-    visibility: visible;
+    display: block;
+    position: absolute;
+    top: 40px;
+    left: 50%;
+    transform: translateX(-50%);
     white-space: nowrap;
+  }
+  .track .station:nth-child(2) span.label {
+    left: 0;
+    transform: none;
+  }
+  .track .station:last-child span.label {
+    left: auto;
+    right: 0;
+    transform: none;
   }
   .suggestion {
     grid-template-columns: minmax(0, 1fr);

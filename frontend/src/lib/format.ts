@@ -54,7 +54,7 @@ export function plural(n: number, one: string, few: string, many: string): strin
 }
 
 export function months(n: number): string {
-  return `${n} ${plural(n, "месяц", "месяца", "месяцев")}`;
+  return `${n}${NBSP}${plural(n, "месяц", "месяца", "месяцев")}`;
 }
 
 // трёхбуквенные подписи месяцев: помещаются под столбиками графика и на узком экране
@@ -71,7 +71,7 @@ export function relativeDue(v: string | null): { text: string; overdue: boolean 
   const mins = Math.round(Math.abs(diff) / 60000);
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  const span = h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
+  const span = h > 0 ? `${h}${NBSP}ч ${m}${NBSP}мин` : `${m}${NBSP}мин`;
   return diff >= 0 ? { text: `осталось ${span}`, overdue: false } : { text: `просрочено на ${span}`, overdue: true };
 }
 

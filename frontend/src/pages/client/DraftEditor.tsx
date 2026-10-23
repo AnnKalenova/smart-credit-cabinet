@@ -8,6 +8,7 @@ import { SignDialog } from "../../components/SignDialog";
 import { AmountInput, Field, ProblemList } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
 import { date, formatInputAmount, money, parseAmount, rateRange } from "../../lib/format";
+import { useSingleFlight } from "../../lib/once";
 import { registerSaver } from "../../lib/pendingSaves";
 import { errorText, useToast } from "../../lib/toast";
 import { DocumentsBlock, useRefreshApp } from "./DocumentsBlock";
@@ -57,10 +58,18 @@ export function DraftEditor({ app }: { app: Application }) {
   const { dict, company } = useAuth();
   const toast = useToast();
   const refresh = useRefreshApp(app.id);
+  const once = useSingleFlight();
   const [d, setD] = useState<Draft>(() => toDraft(app));
   const [saved, setSaved] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState("");
   const [problems, setProblems] = useState<string[]>([]);
+  // список «Чтобы продолжить» относится к тому набору документов, при котором его получили: приложили документ — список устарел
+  const docsKey = app.documents.map((x) => x.id).join(",");
+  const [problemsDocs, setProblemsDocs] = useState("");
+  const docsKeyNow = useRef(docsKey);
+  useEffect(() => {
+    docsKeyNow.current = docsKey;
+  }, [docsKey]);
   const [signing, setSigning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [edited, setEdited] = useState(false);
@@ -71,6 +80,7 @@ export function DraftEditor({ app }: { app: Application }) {
   // сохранения идут строго по одному: следующее начинается, когда закончилось предыдущее
   const queue = useRef<Promise<void>>(Promise.resolve());
   const pending = useRef(0);
+  const inflight = useRef<Partial<Record<keyof Draft, unknown>>>({}); // правки, которые сейчас отправляются
   const latest = useRef(d); // форма на момент отправки — после того как все правки сохранены
   useEffect(() => {
     latest.current = d;
@@ -79,6 +89,24 @@ export function DraftEditor({ app }: { app: Application }) {
   // уход из черновика (ссылка, другая заявка): правку, которую автосохранение ещё не отправило, сохраняем сразу
   const leave = useRef<() => void>(() => undefined);
   useEffect(() => () => leave.current(), []);
+  // закрытие вкладки, перезагрузка или переход на другой сайт: несохранённые правки уходят запросом,
+  // который браузер доводит до конца и после ухода со страницы
+  useEffect(() => {
+    const onHide = () => {
+      const patch = { ...inflight.current, ...dirty.current };
+      const token = getToken();
+      if (Object.keys(patch).length === 0 || !token) return;
+      window.clearTimeout(timer.current);
+      void fetch(`/api/v1/applications/${app.id}`, {
+        method: "PATCH",
+        keepalive: true,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(patch),
+      }).catch(() => undefined);
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, [app.id]);
   // выход из кабинета сначала сохраняет правки, которые ждут автосохранения (пока вход ещё действует)
   const saveNow = useRef<() => Promise<void>>(() => Promise.resolve());
   useEffect(() => registerSaver(() => saveNow.current()), []);
@@ -93,6 +121,7 @@ export function DraftEditor({ app }: { app: Application }) {
       },
       () => {
         if (!active) return;
+        setProblemsDocs(docsKeyNow.current);
         setProblems(["Переход отменён: не удалось сохранить изменения. Проверьте связь и попробуйте ещё раз."]);
         blocker.reset();
       },
@@ -128,10 +157,13 @@ export function DraftEditor({ app }: { app: Application }) {
     const patch = dirty.current;
     if (Object.keys(patch).length === 0) return;
     dirty.current = {};
+    inflight.current = patch;
     setSaved("saving");
     try {
       await api(`/api/v1/applications/${app.id}`, { method: "PATCH", json: patch });
+      inflight.current = {};
     } catch (e) {
+      inflight.current = {};
       // ничего не теряем: несохранённое уйдёт со следующей попыткой, вместе с новыми правками
       dirty.current = { ...patch, ...dirty.current };
       setSaved("error");
@@ -186,6 +218,7 @@ export function DraftEditor({ app }: { app: Application }) {
   const set = <K extends keyof Draft>(key: K, value: Draft[K], immediate = false) => {
     setEdited(true);
     setD((prev) => ({ ...prev, [key]: value }));
+    setProblems([]); // клиент исправляет данные — прежний список замечаний больше не про эту форму
     if (key === "amount") {
       // сумма обязательна: пустое или нулевое значение не сохраняем, пока клиент не введёт число
       const n = parseAmount(String(value));
@@ -248,6 +281,7 @@ export function DraftEditor({ app }: { app: Application }) {
       toast.ok("Заявка отправлена в банк");
       refresh();
     } catch (e) {
+      setProblemsDocs(docsKey);
       if (e instanceof UnsavedChanges) setProblems([`Заявка не отправлена: не удалось сохранить изменения. ${e.message}`]);
       else if (e instanceof ApiError && e.problems.length) setProblems(e.problems);
       else toast.error(e);
@@ -330,7 +364,7 @@ export function DraftEditor({ app }: { app: Application }) {
             <select className="select" value={d.term_months} onChange={(e) => set("term_months", Number(e.target.value), true)}>
               {termOptions(product).map((t) => (
                 <option key={t} value={t}>
-                  {t} мес.
+                  {t}&nbsp;мес.
                 </option>
               ))}
             </select>
@@ -349,6 +383,10 @@ export function DraftEditor({ app }: { app: Application }) {
         </div>
       </section>
 
+      {/* на узком экране расчёт — сразу под параметрами, на широком он в правой колонке */}
+      <div className="only-narrow stack">
+        <DraftEstimate app={app} />
+      </div>
       <section className="panel">
         <div className="panel-head">
           <h2>{company?.kind === "IP" ? "Предприниматель" : "Компания"}</h2>
@@ -442,7 +480,7 @@ export function DraftEditor({ app }: { app: Application }) {
                 : "Чтобы банк мог запросить кредитную историю и сведения о компании, нужны два согласия. Подписать их может руководитель или представитель по доверенности — кодом прямо здесь."}
             </p>
           )}
-          <ProblemList problems={problems} />
+          <ProblemList problems={problemsDocs === docsKey ? problems : []} />
           {canSign ? (
             <div className="row-wrap">
               {!consentsSigned && (
@@ -462,7 +500,7 @@ export function DraftEditor({ app }: { app: Application }) {
                   Вы можете подготовить заявку и документы. Подписать согласия и отправить заявку может: {app.permissions.signers.join(", ")}.
                 </span>
                 <div>
-                  <button className="btn btn-primary btn-s" onClick={askSigner}>
+                  <button className="btn btn-primary btn-s" onClick={() => once(askSigner)}>
                     Передать на подпись
                   </button>
                 </div>
@@ -497,7 +535,9 @@ export function DraftEstimate({ app }: { app: Application }) {
         },
       }),
   });
-  const r = est.data?.results.find((x) => x.product_code === app.product_code);
+  // подбор приводит сумму и срок к границам продукта: если он их поправил, расчёт не про этот черновик
+  const found = est.data?.results.find((x) => x.product_code === app.product_code);
+  const r = found && found.amount === app.amount && found.term_months === app.term_months ? found : undefined;
   const auto = app.amount <= app.product.auto_decision_limit;
   return (
     <section className="panel">

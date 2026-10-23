@@ -62,6 +62,8 @@ export function MatchPage() {
     create.mutate(r);
   };
 
+  if (!dict) return <Loader />;
+
   return (
     <>
       <div className="crumbs">
@@ -98,6 +100,11 @@ export function MatchPage() {
                 <AmountInput id="amount" className="input input-money" value={amountText} placeholder="1 000 000" onValueChange={setAmountText} />
                 <span className="suffix">₽</span>
               </div>
+              {amount > MAX_AMOUNT && (
+                <span className="field-error" role="alert">
+                  Сумма больше {money(MAX_AMOUNT)} — столько не выдаёт ни один продукт, укажите сумму поменьше
+                </span>
+              )}
               <div className="presets">
                 {PRESETS.map((v) => (
                   <button key={v} type="button" onClick={() => setAmountText(formatInputAmount(v))}>
@@ -111,7 +118,7 @@ export function MatchPage() {
               <select id="term" className="select" value={term} onChange={(e) => setTerm(Number(e.target.value))}>
                 {TERMS.map((t) => (
                   <option key={t} value={t}>
-                    {t} мес.
+                    {t}&nbsp;мес.
                   </option>
                 ))}
               </select>
@@ -175,7 +182,7 @@ export function MatchPage() {
                   <div className="xs faint">{r.repayment_type === "REVOLVING" ? "Проценты в месяц при полном использовании" : "Платёж в месяц, примерно"}</div>
                   <div className="val">{money(r.monthly_payment)}</div>
                   <div className="xs faint">
-                    {money(r.amount)} на {r.term_months} мес.
+                    {money(r.amount)} на {r.term_months}&nbsp;мес.
                   </div>
                 </div>
                 <button className={`btn ${r.recommended ? "btn-primary" : "btn-ghost"}`} disabled={create.isPending} onClick={() => startDraft(r)}>

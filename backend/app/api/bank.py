@@ -131,10 +131,16 @@ def list_applications(
         query = query.where(Application.status == status_filter)
     if product:
         query = query.where(Application.product_code == product)
-    if q:
-        like = f"%{q.strip()}%"
+    if q and q.strip():
+        # «%» и «_» в запросе ищутся как обычные символы, а не как шаблон
+        text = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{text}%"
         query = query.where(
-            or_(Application.number.ilike(like), Company.short_name.ilike(like), Company.inn.ilike(like))
+            or_(
+                Application.number.ilike(like, escape="\\"),
+                Company.short_name.ilike(like, escape="\\"),
+                Company.inn.ilike(like, escape="\\"),
+            )
         )
     if scope == "queue":
         query = query.order_by(Application.review_due_at.asc().nulls_last())
@@ -169,6 +175,7 @@ def get_application(app_id: uuid.UUID, db: Session = Depends(get_db), user: User
                 "min_term": params.min_term,
                 "max_term": params.max_term,
                 "default_rate": rate,
+                "repayment_type": params.repayment_type,  # чтобы форма решения показала платёж по варианту
                 "min_rate": rate_bounds(params, kr)[0],
                 "max_rate": rate_bounds(params, kr)[1],
             }
@@ -196,7 +203,7 @@ def assign(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depend
         db,
         app,
         "ASSIGNED",
-        f"Заявку взял в работу: {user.full_name}",
+        f"Заявка в работе у специалиста: {user.full_name}",
         actor_type=ActorType.ANALYST,
         actor_id=user.id,
         client_visible=False,
@@ -330,7 +337,14 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
                 and abs(o.amount - float(app.amount)) < 1
                 and o.term_months == app.term_months
             )
-            label = o.label or ("Запрошенные условия" if same else "Условия, согласованные специалистом")
+            # «Запрошенные условия» — только если условия и правда как в заявке: изменённый специалистом вариант
+            # не должен выдавать себя за то, что просил клиент
+            if same:
+                label = "Запрошенные условия"
+            elif o.label and o.label != "Запрошенные условия":
+                label = o.label
+            else:
+                label = "Условия, согласованные специалистом"
             draft = _offer(
                 params, o.amount, o.term_months, rate, pricing, app.owner_guarantee, not same, label, app.has_collateral
             )

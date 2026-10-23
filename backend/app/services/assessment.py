@@ -289,14 +289,31 @@ def build_policy_input(
 # --------------------------------------------------------------------------- подбор продукта
 
 
+def known_registry_status(db: Session, company_id) -> str | None:
+    """Статус компании по последней выписке из ЕГРЮЛ/ЕГРИП, которую банк получал по её заявкам."""
+    payload = db.execute(
+        select(EnrichmentResult.payload)
+        .join(Application, Application.id == EnrichmentResult.application_id)
+        .where(Application.company_id == company_id, EnrichmentResult.source == "EGRUL")
+        .order_by(EnrichmentResult.fetched_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return payload.get("status") if isinstance(payload, dict) else None
+
+
 def preapproved_limit(db: Session, company: Company, key_rate: float, as_of: date) -> dict | None:
     """Предварительный лимит экспресс-кредита по внутренним данным банка (обороты по счёту).
 
     Консервативно: рейтинг принимается равным C, долговая нагрузка в других банках неизвестна
     до запроса в БКИ, поэтому лимит предварительный — окончательный рассчитывается при рассмотрении.
+    Если по последней выписке из реестра компания не действующая (ликвидация, банкротство), лимита нет:
+    банк уже знает о стоп-факторе и не обещает кредит, в котором откажет.
     """
     product = db.get(Product, "EXPRESS")
     if product is None or not product.is_active:
+        return None
+    status = known_registry_status(db, company.id)
+    if status is not None and status != "ACTIVE":
         return None
     stats = company_turnover(db, company.id)
     if stats.months < 3:

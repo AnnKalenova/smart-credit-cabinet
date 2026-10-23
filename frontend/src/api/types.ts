@@ -469,6 +469,7 @@ export interface PricingHint {
   min_term: number;
   max_term: number;
   default_rate: number;
+  repayment_type: "ANNUITY" | "REVOLVING";
   min_rate: number;
   max_rate: number;
 }

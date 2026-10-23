@@ -28,7 +28,7 @@ export function LoanPage() {
           </h1>
           <p className="muted">
             Договор {l.contract_number} от {date(l.issued_at)}, ссудный счёт {l.loan_account}.{" "}
-            <Link to={`/c/applications/${l.application_id}`}>Заявка № {l.application_number}</Link>
+            <Link to={`/c/applications/${l.application_id}`}>Заявка №&nbsp;{l.application_number}</Link>
           </p>
         </div>
       </div>

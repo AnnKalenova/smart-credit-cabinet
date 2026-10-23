@@ -75,7 +75,7 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
   try {
     res = await fetch(path, { ...init, headers, body });
   } catch {
-    throw new ApiError(0, "Нет связи с сервером — проверьте, что сервис запущен");
+    throw new ApiError(0, "Нет связи с банком — проверьте интернет и попробуйте ещё раз");
   }
   if (res.status === 401 && token) {
     onUnauthorized?.();
@@ -97,8 +97,13 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
 }
 
 export async function download(path: string, fileName: string): Promise<void> {
-  const res = await fetch(path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-  if (!res.ok) throw new ApiError(res.status, "Не удалось скачать файл");
+  let res: Response;
+  try {
+    res = await fetch(path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  } catch {
+    throw new ApiError(0, "Не удалось скачать файл: нет связи с банком");
+  }
+  if (!res.ok) throw new ApiError(res.status, "Не удалось скачать файл — попробуйте ещё раз");
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

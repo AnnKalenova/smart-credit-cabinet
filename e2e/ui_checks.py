@@ -6,6 +6,7 @@
 3. Клиент изменил сумму и сразу ушёл из черновика или вышел из кабинета: правка всё равно сохраняется.
 4. При сбое сохранения переход, «Назад» и выход отменяются; после восстановления связи правка сохраняется.
 5. Медленный запрос не теряется при выходе, а перезагрузка предупреждает о несохранённых изменениях.
+6. Вёрстка ключевых экранов клиента и банка не уезжает за край окна ни на телефоне, ни на широком мониторе.
 
     pip install playwright httpx && python -m playwright install chromium
     python e2e/ui_checks.py --base-url http://localhost:8080
@@ -187,6 +188,8 @@ async def check_back_during_failure(page: Page, base: str) -> str:
     await expect(page.get_by_label("Сумма")).to_have_value(re.compile(r"^880\s000$"))
     await page.unroute(f"**{url}", fail_patches)
     await page.evaluate("history.back()")
+    # пока переход ждёт сохранения, адрес на мгновение уже /c — ждём, когда черновик действительно закроется
+    await expect(page.get_by_role("heading", name="Параметры кредита")).to_have_count(0)
     await expect(page).to_have_url(f"{base}/c")
     assert c.req("GET", url)["amount"] == 880_000
     return "кнопка «Назад» не теряет правку при ошибке сохранения"
@@ -257,6 +260,84 @@ async def check_reload_warns_about_changes(page: Page, base: str) -> str:
     return "браузер предупредил перед перезагрузкой; отмена сохранила правку в форме"
 
 
+LAYOUT_WIDTHS = (320, 390, 768, 1024, 1280, 1920)
+
+# Что вылезает за край окна. Широкие таблицы прокручиваются внутри своей рамки — это не считается,
+# кроме очереди заявок: на планшете и телефоне она карточками и в сторону прокручиваться не должна.
+OVERFLOW_JS = """() => {
+  const vw = document.documentElement.clientWidth;
+  const queue = document.querySelector(".queue-table")?.closest(".table-wrap");
+  const queueScrolls = vw <= 1040 && queue && queue.scrollWidth > queue.clientWidth + 1;
+  const inScroller = (e) => {
+    for (let p = e.parentElement; p && p !== document.body; p = p.parentElement)
+      if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(p).overflowX)) return true;
+    return false;
+  };
+  const out = [];
+  for (const e of document.querySelectorAll("body *")) {
+    const b = e.getBoundingClientRect();
+    if (b.width && b.height && (b.right > vw + 1 || b.left < -1) && !inScroller(e))
+      out.push(e.tagName.toLowerCase() + "." + String(e.className).trim().split(/\\s+/).join("."));
+  }
+  if (queueScrolls) out.unshift("карточки очереди шире экрана");
+  return { extra: document.documentElement.scrollWidth - vw, out: out.slice(0, 3) };
+}"""
+
+
+async def check_layout_widths(page: Page, base: str) -> str:
+    client, app = new_draft(base)
+    # отправленная заявка — чтобы в реестре банка была хотя бы одна карточка
+    sent = prepare(client, "EXPRESS", "OTHER", 300_000, 6, purpose_details="Проверка вёрстки")
+    client.req("POST", f"/api/v1/applications/{sent['id']}/submit")
+    tokens = {"smirnov": client.http.headers["Authorization"].split()[1]}
+    for login in ("analyst", "risk"):
+        tokens[login] = Client(base, login).http.headers["Authorization"].split()[1]
+
+    def heading(name: str):
+        return lambda p: p.get_by_role("heading", name=name, exact=True)
+
+    async def all_applications(p: Page) -> None:
+        await p.get_by_role("tab", name="Все").click()
+        await p.locator(".queue-table").first.wait_for()
+
+    async def pick_purpose(p: Page) -> None:
+        await p.get_by_role("button", name="Закупка товара, сырья, материалов").click()
+        await p.get_by_label("Сумма").fill("3000000")
+        await heading("Подходящие варианты")(p).wait_for()
+
+    # экран: кто входит, адрес, чего дождаться, что сделать на странице
+    screens = [
+        (None, "/login", lambda p: p.get_by_text("Войти в один клик"), None),
+        ("smirnov", "/c", heading("Кредиты"), None),
+        ("smirnov", "/c/match", heading("На что нужны деньги?"), pick_purpose),
+        ("smirnov", f"/c/applications/{app['id']}", heading("Параметры кредита"), None),
+        ("analyst", "/b", lambda p: p.get_by_role("tab", name="Все"), all_applications),
+        ("analyst", "/b/dashboard", heading("Воронка"), None),
+        ("risk", "/b/settings", lambda p: p.locator("table tbody tr"), None),
+    ]
+    await page.emulate_media(reduced_motion="reduce")
+    problems: list[str] = []
+    for who, path, ready, action in screens:
+        await page.set_viewport_size({"width": 1280, "height": 900})
+        await page.goto(f"{base}/login")
+        await page.evaluate(
+            "t => t ? localStorage.setItem('scc.token', t) : localStorage.removeItem('scc.token')",
+            tokens.get(who or ""),
+        )
+        await page.goto(base + path)
+        await ready(page).first.wait_for()
+        if action:
+            await action(page)
+        for width in LAYOUT_WIDTHS:
+            await page.set_viewport_size({"width": width, "height": 800})
+            await page.wait_for_timeout(200)
+            info = await page.evaluate(OVERFLOW_JS)
+            if info["extra"] > 0 or info["out"]:
+                problems.append(f"{path} при ширине {width}: лишние {info['extra']} px, {info['out']}")
+    assert not problems, "; ".join(problems[:4])
+    return f"{len(screens)} экранов при ширине {', '.join(map(str, LAYOUT_WIDTHS))} px — ничего не уходит за край окна"
+
+
 CHECKS = [
     ("Ошибка автосохранения не отправляет старую сумму", check_failed_autosave),
     ("Отправка ждёт медленного автосохранения", check_slow_autosave),
@@ -267,6 +348,7 @@ CHECKS = [
     ("Сбой сохранения отменяет выход", check_logout_during_failure),
     ("Выход ждёт уже отправленный PATCH", check_logout_waits_for_inflight_save),
     ("Перезагрузка предупреждает о правках", check_reload_warns_about_changes),
+    ("Вёрстка от телефона до широкого монитора", check_layout_widths),
 ]
 
 

@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, FileText, Plus, RotateCcw, Send, Trash2, UserCheck } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, download } from "../../api/client";
-import type { BankApplication, BankDecision, Message, SourcePayload } from "../../api/types";
-import { AmountInput, Field, Grade, Loader, Timeline, TurnoverBars, bankTone } from "../../components/ui";
+import { ApiError, api, download } from "../../api/client";
+import type { BankApplication, BankDecision, InfoRequest, Message, SourcePayload } from "../../api/types";
+import { AmountInput, Field, Grade, Loader, Timeline, TurnoverBars, bankTone, useScrollToEnd } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
 import { date, dateTime, formatInputAmount, money, parseAmount, pct, rateRange, relativeDue } from "../../lib/format";
+import { useSingleFlight } from "../../lib/once";
 import { useToast } from "../../lib/toast";
 
 const TABS = ["Сводка", "Скоринг", "Источники", "Документы и переписка", "Журнал"] as const;
@@ -26,9 +27,29 @@ const RERUN_REASONS = ["integration_unavailable", "technical_failure"];
 
 // ------------------------------------------------------------------ решение аналитика
 
-type OfferDraft = { product_code: string; amount: string; term_months: number; rate: string; label: string };
+/** origin — условия рекомендации: пока их не меняли, у варианта остаётся её название */
+type OfferDraft = { product_code: string; amount: string; term_months: number; rate: string; label: string; origin: string };
+
+const variantKey = (product: string, amount: number, term: number) => `${product}|${amount}|${term}`;
+
+/** «17», «17,5», «17.5 %» → число; всё, что не число, — null (а не «ставка по политике» молча) */
+function parseRate(text: string): number | null {
+  const t = text.replace(/[\s%]/g, "").replace(",", ".");
+  return /^\d+(\.\d+)?$/.test(t) ? Number(t) : null;
+}
+
+/** Платёж в месяц, как его считает банк: аннуитет или проценты по лимиту овердрафта */
+function monthlyPayment(amount: number, rate: number, months: number, repayment: string): number {
+  const r = rate / 100 / 12;
+  if (repayment === "REVOLVING") return amount * r;
+  if (r === 0) return amount / months;
+  return (amount * r) / (1 - (1 + r) ** -months);
+}
 
 function recommendedOffers(app: BankApplication): OfferDraft[] {
+  // ставка — по политике на сегодня: рекомендацию могли рассчитать до смены ключевой ставки
+  const policyRate = (code: string, fallback: number | string) =>
+    String(app.pricing_hints.find((h) => h.product_code === code)?.default_rate ?? fallback).replace(".", ",");
   const auto = app.decisions.find((d) => d.kind === "AUTO" && d.details.offers?.length);
   const offers = auto?.details.offers ?? [];
   if (offers.length) {
@@ -36,18 +57,19 @@ function recommendedOffers(app: BankApplication): OfferDraft[] {
       product_code: o.product_code,
       amount: formatInputAmount(o.amount),
       term_months: o.term_months,
-      rate: String(o.rate).replace(".", ","),
+      rate: policyRate(o.product_code, o.rate),
       label: o.label,
+      origin: variantKey(o.product_code, o.amount, o.term_months),
     }));
   }
-  const hint = app.pricing_hints.find((h) => h.product_code === app.product_code);
   return [
     {
       product_code: app.product_code,
       amount: formatInputAmount(app.amount),
       term_months: app.term_months,
-      rate: String(hint?.default_rate ?? "").replace(".", ","),
+      rate: policyRate(app.product_code, ""),
       label: "",
+      origin: "",
     },
   ];
 }
@@ -73,17 +95,25 @@ function DecisionForm({ app }: { app: BankApplication }) {
   const [message, setMessage] = useState("");
   const [comment, setComment] = useState("");
 
+  const once = useSingleFlight();
+  // ошибки вариантов видны до отправки: ставка не числом, два одинаковых варианта
+  const offerErrors = offers.map((o, i) => {
+    if (parseRate(o.rate) === null) return "Укажите ставку числом, например 16,5";
+    const key = variantKey(o.product_code, parseAmount(o.amount), Number(o.term_months));
+    const twin = offers.findIndex((x, j) => j < i && variantKey(x.product_code, parseAmount(x.amount), Number(x.term_months)) === key && x.rate === o.rate);
+    return twin >= 0 ? `Такой же, как вариант ${twin + 1}: измените условия или уберите его` : null;
+  });
   const submit = useMutation({
     mutationFn: () => {
-      const body: Record<string, unknown> = { action, message_to_client: message || null, comment_internal: comment || null };
+      const body: Record<string, unknown> = { action, message_to_client: message.trim() || null, comment_internal: comment.trim() || null };
       if (action === "APPROVE") {
-        body.offers = offers.map((o) => ({
-          product_code: o.product_code,
-          amount: parseAmount(o.amount),
-          term_months: Number(o.term_months),
-          rate: o.rate ? Number(o.rate.replace(",", ".")) : null,
-          label: o.label || null,
-        }));
+        body.offers = offers.map((o) => {
+          const amount = parseAmount(o.amount);
+          const term = Number(o.term_months);
+          // название рекомендации («Вся сумма на 18 мес.») — только пока условия не меняли
+          const unchanged = o.origin === variantKey(o.product_code, amount, term);
+          return { product_code: o.product_code, amount, term_months: term, rate: parseRate(o.rate), label: unchanged ? o.label || null : null };
+        });
       } else if (action === "REQUEST_INFO") {
         const items: { type: string; doc_type?: string; label: string }[] = docs.map((d) => ({ type: "DOCUMENT", doc_type: d, label: dict?.doc_types[d] ?? d }));
         if (customItem.trim()) items.push({ type: "DOCUMENT", doc_type: "OTHER", label: customItem.trim() });
@@ -163,17 +193,25 @@ function DecisionForm({ app }: { app: BankApplication }) {
                       <input className="input" inputMode="decimal" maxLength={6} value={o.rate} onChange={(e) => updateOffer(i, { rate: e.target.value })} />
                     </Field>
                   </div>
+                  {offerErrors[i] && <span className="field-error">{offerErrors[i]}</span>}
                   {hint && (
                     <span className="xs faint">
-                      {money(hint.min_amount)}–{money(hint.max_amount)}, {hint.min_term}–{hint.max_term} мес., ставка {rateRange(hint.min_rate, hint.max_rate)}, по политике{" "}
+                      {money(hint.min_amount)}–{money(hint.max_amount)}, {hint.min_term}–{hint.max_term}&nbsp;мес., ставка {rateRange(hint.min_rate, hint.max_rate)}, по политике{" "}
                       {pct(hint.default_rate)}
                     </span>
+                  )}
+                  {hint && !offerErrors[i] && parseAmount(o.amount) > 0 && Number(o.term_months) > 0 && (
+                    <OfferPayment
+                      payment={monthlyPayment(parseAmount(o.amount), parseRate(o.rate)!, Number(o.term_months), hint.repayment_type)}
+                      revolving={hint.repayment_type === "REVOLVING"}
+                      room={app.load?.room ?? null}
+                    />
                   )}
                 </div>
               );
             })}
             {offers.length < 3 && (
-              <button className="btn btn-ghost btn-s" onClick={() => setOffers([...offers, { ...offers[offers.length - 1], label: "" }])}>
+              <button className="btn btn-ghost btn-s" onClick={() => setOffers([...offers, { ...offers[offers.length - 1], label: "", origin: "" }])}>
                 <Plus size={15} /> Добавить вариант
               </button>
             )}
@@ -224,13 +262,42 @@ function DecisionForm({ app }: { app: BankApplication }) {
         </Field>
         <button
           className={`btn ${action === "DECLINE" ? "btn-danger" : "btn-primary"}`}
-          disabled={submit.isPending || (action === "REQUEST_INFO" && !docs.length && !customItem.trim() && !question.trim())}
-          onClick={() => submit.mutate()}
+          disabled={
+            submit.isPending ||
+            (action === "REQUEST_INFO" && !docs.length && !customItem.trim() && !question.trim()) ||
+            (action === "APPROVE" && offerErrors.some(Boolean))
+          }
+          onClick={() => once(() => submit.mutateAsync().catch(() => undefined))}
         >
           <Send size={17} /> {action === "APPROVE" ? "Отправить предложение" : action === "REQUEST_INFO" ? "Отправить запрос" : "Оформить отказ"}
         </button>
       </div>
     </section>
+  );
+}
+
+/** Платёж по варианту и помещается ли он в ограничение нагрузки — до отправки, а не после отказа сервера.
+ *  Свободное место приходит округлённым вниз до 100 ₽, поэтому платёж в пределах этих 100 ₽ — «на границе»:
+ *  точно его проверяет отправка. */
+function OfferPayment({ payment, revolving, room }: { payment: number; revolving: boolean; room: number | null }) {
+  let tail = "";
+  let bad = false;
+  if (room !== null && room <= 0) {
+    tail = " — свободного места под новый платёж нет, такой вариант отправить нельзя";
+    bad = true;
+  } else if (room !== null && payment <= room) {
+    tail = ` — помещается в свободные ${money(room)}`;
+  } else if (room !== null && payment < room + 100) {
+    tail = ` — на границе свободных ${money(room)}: точная проверка — при отправке`;
+  } else if (room !== null) {
+    tail = ` — больше свободных ${money(room)}, такой вариант отправить нельзя`;
+    bad = true;
+  }
+  return (
+    <span className={`xs ${bad ? "neg" : "muted"}`}>
+      {revolving ? "Проценты в месяц при полном использовании" : "Платёж в месяц"} ≈&nbsp;{money(Math.round(payment))}
+      {tail}
+    </span>
   );
 }
 
@@ -246,7 +313,7 @@ function DecisionCard({ d }: { d: BankDecision }) {
       </div>
       <ul className="small" style={{ margin: "6px 0 0", paddingLeft: 18 }}>
         {d.reasons
-          .filter((r) => r.kind !== "POSITIVE")
+          .filter((r) => r.kind !== "POSITIVE" && r.text !== d.comment_internal)
           .map((r, i) => (
             <li key={i}>{r.text}</li>
           ))}
@@ -254,7 +321,7 @@ function DecisionCard({ d }: { d: BankDecision }) {
       {d.details.recommendation && (
         <p className="small" style={{ marginTop: 6 }}>
           Рекомендация системы: <b>{d.details.recommendation === "APPROVE" ? "одобрить запрошенные условия" : "встречное предложение"}</b>
-          {d.details.offers?.length ? `: ${d.details.offers.map((o) => `${money(o.amount)} на ${o.term_months} мес. под ${pct(o.rate)}`).join("; ")}` : ""}
+          {d.details.offers?.length ? `: ${d.details.offers.map((o) => `${money(o.amount)} на ${o.term_months}\u00a0мес. под ${pct(o.rate)}`).join("; ")}` : ""}
         </p>
       )}
       {d.comment_internal && <p className="small muted" style={{ marginTop: 6 }}>Комментарий: {d.comment_internal}</p>}
@@ -276,7 +343,7 @@ function Summary({ app }: { app: BankApplication }) {
           <dd>{app.product_name}</dd>
           <dt>Сумма и срок</dt>
           <dd>
-            {money(app.amount)} на {app.term_months} мес.
+            {money(app.amount)} на {app.term_months}&nbsp;мес.
           </dd>
           <dt>Цель</dt>
           <dd>
@@ -405,7 +472,7 @@ function Scoring({ app }: { app: BankApplication }) {
             <dd>×{calc.limit_calculation.grade_factor}</dd>
             <dt>Итоговый лимит</dt>
             <dd>
-              <b>{money(calc.limit_calculation.max_limit)}</b> на {calc.limit_calculation.term_months} мес.
+              <b>{money(calc.limit_calculation.max_limit)}</b> на {calc.limit_calculation.term_months}&nbsp;мес.
             </dd>
           </dl>
           {calc.pricing && (
@@ -427,7 +494,12 @@ function Scoring({ app }: { app: BankApplication }) {
 }
 
 function Sources({ app }: { app: BankApplication }) {
-  const [raw, setRaw] = useState<string | null>(null);
+  const [raw, setRaw] = useState<{ title: string; text: string } | null>(null);
+  const rawRef = useRef<HTMLElement>(null);
+  // ответ открывается внизу вкладки — прокручиваем к нему, чтобы было видно, что кнопка сработала
+  useEffect(() => {
+    if (raw) rawRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [raw]);
   const eg = app.sources.EGRUL?.payload;
   const fns = app.sources.FNS?.payload;
   const bki = app.sources.BKI?.payload;
@@ -448,7 +520,7 @@ function Sources({ app }: { app: BankApplication }) {
         <section className="panel">
           <div className="panel-head">
             <h3>ЕГРЮЛ / ЕГРИП</h3>
-            <button className="btn-link xs" onClick={() => setRaw(JSON.stringify(eg, null, 2))}>
+            <button className="btn-link xs" onClick={() => setRaw({ title: "ЕГРЮЛ / ЕГРИП", text: JSON.stringify(eg, null, 2) })}>
               Ответ сервиса
             </button>
           </div>
@@ -486,7 +558,7 @@ function Sources({ app }: { app: BankApplication }) {
         <section className="panel">
           <div className="panel-head">
             <h3>ФНС «Прозрачный бизнес»</h3>
-            <button className="btn-link xs" onClick={() => setRaw(JSON.stringify(fns, null, 2))}>
+            <button className="btn-link xs" onClick={() => setRaw({ title: "ФНС «Прозрачный бизнес»", text: JSON.stringify(fns, null, 2) })}>
               Ответ сервиса
             </button>
           </div>
@@ -514,7 +586,7 @@ function Sources({ app }: { app: BankApplication }) {
         <section className="panel">
           <div className="panel-head">
             <h3>Кредитная история (БКИ)</h3>
-            <button className="btn-link xs" onClick={() => setRaw(JSON.stringify(bki, null, 2))}>
+            <button className="btn-link xs" onClick={() => setRaw({ title: "Кредитная история (БКИ)", text: JSON.stringify(bki, null, 2) })}>
               Ответ сервиса
             </button>
           </div>
@@ -522,8 +594,8 @@ function Sources({ app }: { app: BankApplication }) {
             <dt>Балл БКИ</dt>
             <dd>{bki.score ?? "—"}</dd>
             <dt>Длина истории</dt>
-            <dd>{bki.history_length_months} мес.</dd>
-            <dt>Макс. просрочка за 12 мес.</dt>
+            <dd>{bki.history_length_months}&nbsp;мес.</dd>
+            <dt>Макс. просрочка за 12&nbsp;мес.</dt>
             <dd className={bki.max_overdue_days_12m > 0 ? "neg" : ""}>{bki.max_overdue_days_12m} дн.</dd>
             <dt>Запросов за 30 дней</dt>
             <dd>{bki.inquiries_30d}</dd>
@@ -560,17 +632,57 @@ function Sources({ app }: { app: BankApplication }) {
       )}
       {!eg && !fns && !bki && <div className="panel muted">Сведения из внешних источников ещё не получены.</div>}
       {raw && (
-        <section className="panel">
+        <section className="panel" ref={rawRef}>
           <div className="panel-head">
-            <h3>Ответ сервиса</h3>
+            <h3>Ответ сервиса: {raw.title}</h3>
             <button className="btn-link xs" onClick={() => setRaw(null)}>
               Скрыть
             </button>
           </div>
-          <pre className="json">{raw}</pre>
+          <pre className="json">{raw.text}</pre>
         </section>
       )}
     </div>
+  );
+}
+
+/** Что банк запрашивал у клиента и что клиент ответил: документы приходят в «Документы клиента», комментарий — здесь. */
+function InfoRequests({ requests }: { requests: InfoRequest[] }) {
+  if (requests.length === 0) return null;
+  const sorted = [...requests].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return (
+    <section className="panel">
+      <h3>Запросы клиенту</h3>
+      <div className="stack" style={{ marginTop: 12 }}>
+        {sorted.map((r) => (
+          <div key={r.id} className="panel-flat" style={{ padding: "12px 14px" }}>
+            <div className="row-wrap">
+              <b className="small">
+                {r.requested_by ?? "Система"}, {dateTime(r.created_at)}
+              </b>
+              <span className="spacer" />
+              <span className={`chip ${r.status === "OPEN" ? "action" : r.status === "ANSWERED" ? "positive" : ""}`}>
+                {r.status === "OPEN" ? "Ждём ответа" : r.status === "ANSWERED" ? `Ответ ${r.answered_at ? dateTime(r.answered_at) : "получен"}` : "Отменён"}
+              </span>
+            </div>
+            {r.message && <p className="small" style={{ marginTop: 6 }}>{r.message}</p>}
+            <ul className="small" style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {r.items.map((i) => (
+                <li key={i.code}>
+                  {i.type === "DOCUMENT" ? "Документ: " : i.type === "FIELD" ? "Уточнить: " : "Вопрос: "}
+                  {i.label}
+                </li>
+              ))}
+            </ul>
+            {r.answer_comment && (
+              <p className="small" style={{ marginTop: 8 }}>
+                <b>Ответ клиента:</b> {r.answer_comment}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -591,8 +703,17 @@ function DocsAndChat({ app }: { app: BankApplication }) {
     },
     onError: (e) => toast.error(e),
   });
+  const chatRef = useScrollToEnd<HTMLDivElement>(msgs.data?.length ?? 0);
+  // двойное нажатие или Enter, пока сообщение уходит, не отправляют его второй раз
+  const sending = useRef(false);
+  const sendOnce = () => {
+    if (sending.current || !text.trim()) return;
+    sending.current = true;
+    send.mutate(undefined, { onSettled: () => (sending.current = false) });
+  };
   return (
     <div className="stack">
+      <InfoRequests requests={app.info_requests} />
       <section className="panel">
         <h3>Документы клиента</h3>
         {app.documents.length === 0 && <p className="small muted" style={{ marginTop: 8 }}>Документы не прикладывались.</p>}
@@ -600,7 +721,10 @@ function DocsAndChat({ app }: { app: BankApplication }) {
           {app.documents.map((d) => (
             <div key={d.id} className="row small">
               <FileText size={16} className="faint" />
-              <button className="btn-link" onClick={() => download(`/api/v1/bank/applications/${app.id}/documents/${d.id}`, d.file_name)}>
+              <button
+                className="btn-link doc-name"
+                onClick={() => download(`/api/v1/bank/applications/${app.id}/documents/${d.id}`, d.file_name).catch((e) => toast.error(e))}
+              >
                 {d.file_name}
               </button>
               <span className="faint">
@@ -617,7 +741,7 @@ function DocsAndChat({ app }: { app: BankApplication }) {
       </section>
       <section className="panel">
         <h3>Переписка с клиентом</h3>
-        <div className="chat" style={{ marginTop: 12 }}>
+        <div className="chat" style={{ marginTop: 12 }} ref={chatRef}>
           {(msgs.data ?? []).length === 0 && <p className="small faint">Сообщений пока нет.</p>}
           {msgs.data?.map((m) => (
             <div key={m.id} className={`bubble ${m.author_role !== "CLIENT" ? "mine" : ""}`}>
@@ -628,8 +752,16 @@ function DocsAndChat({ app }: { app: BankApplication }) {
           ))}
         </div>
         <div className="row" style={{ marginTop: 12 }}>
-          <input className="input" placeholder="Сообщение клиенту" aria-label="Сообщение клиенту" maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && text.trim() && send.mutate()} />
-          <button className="btn btn-primary" disabled={!text.trim()} onClick={() => send.mutate()} aria-label="Отправить">
+          <input
+            className="input"
+            placeholder="Написать клиенту"
+            aria-label="Написать клиенту в переписке"
+            maxLength={4000}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendOnce()}
+          />
+          <button className="btn btn-primary" disabled={!text.trim() || send.isPending} onClick={sendOnce} aria-label="Отправить">
             <Send size={17} />
           </button>
         </div>
@@ -701,34 +833,60 @@ export function BankApplicationPage() {
   // новое решение по заявке — форма решения начинается заново
   const decisionKey = useMemo(() => q.data?.decisions.map((d) => d.id).join(",") ?? "", [q.data]);
 
-  const act = async (path: string, ok: string) => {
-    try {
-      await api(`/api/v1/bank/applications/${id}/${path}`, { method: "POST" });
-      toast.ok(ok);
-      void qc.invalidateQueries({ queryKey: ["bank-app", id] });
-    } catch (e) {
-      toast.error(e);
-    }
-  };
+  const once = useSingleFlight();
+  // двойное нажатие не отправляет действие второй раз (и не показывает лишнюю ошибку «заявка изменилась»)
+  const act = (path: string, ok: string) =>
+    once(async () => {
+      try {
+        await api(`/api/v1/bank/applications/${id}/${path}`, { method: "POST" });
+        toast.ok(ok);
+        void qc.invalidateQueries({ queryKey: ["bank-app", id] });
+      } catch (e) {
+        toast.error(e);
+      }
+    });
 
   if (q.isLoading) return <Loader />;
-  if (!q.data) return <div className="panel">Заявка не найдена</div>;
+  if (!q.data) {
+    const notFound = q.error instanceof ApiError && q.error.status === 404;
+    return (
+      <section className="panel">
+        <h2>{notFound ? "Заявка не найдена" : "Не удалось загрузить заявку"}</h2>
+        <p className="muted" style={{ marginTop: 6 }}>
+          {notFound ? "Возможно, ссылка устарела." : "Проверьте связь и попробуйте ещё раз."}
+        </p>
+        <div className="row-wrap" style={{ marginTop: 16 }}>
+          {!notFound && (
+            <button className="btn btn-primary" onClick={() => void q.refetch()}>
+              Повторить
+            </button>
+          )}
+          <Link className="btn btn-ghost" to="/b">
+            К списку заявок
+          </Link>
+        </div>
+      </section>
+    );
+  }
   const app = q.data;
   const due = relativeDue(app.review_due_at);
   const mine = app.assignee === me?.user.full_name;
+  // решение принимает тот, кто взял заявку в работу, или риск-менеджер — остальным форма не нужна
+  const takenByOther = Boolean(app.assignee) && !mine && me?.user.role !== "RISK_MANAGER";
+  const canDecide = app.permissions.can_decide && !takenByOther;
 
   return (
     <>
       <div className="crumbs">
         <Link to="/b">Заявки</Link>
         <span>/</span>
-        <span>№ {app.number}</span>
+        <span>№&nbsp;{app.number}</span>
       </div>
       <div className="page-head">
         <div>
           <h1>{app.company_name}</h1>
           <p className="muted">
-            Заявка № {app.number}: {app.product_name}, {money(app.amount)} на {app.term_months} мес. ИНН {app.company_inn}
+            Заявка №&nbsp;{app.number}: {app.product_name}, {money(app.amount)} на {app.term_months}&nbsp;мес. ИНН {app.company_inn}
           </p>
         </div>
         <div className="row-wrap">
@@ -794,7 +952,7 @@ export function BankApplicationPage() {
           {tab === "Журнал" && <Journal app={app} />}
         </div>
         <aside className="stack">
-          {app.permissions.can_decide ? (
+          {canDecide ? (
             <>
               {app.triggers.length > 0 && (
                 <section className="panel">
@@ -820,17 +978,25 @@ export function BankApplicationPage() {
                 </div>
               )}
               <p className="small muted" style={{ marginTop: 8 }}>
-                {app.status === "NEEDS_INFO"
-                  ? "Ждём ответ клиента на запрос. После ответа заявка снова пройдёт автоматическую проверку."
-                  : ["OFFER_READY", "SIGNING", "DISBURSEMENT", "ISSUED"].includes(app.status)
-                    ? "Решение принято, дальше клиент работает с предложением."
-                    : app.status === "DECLINED"
-                      ? "По заявке оформлен отказ."
-                      : "Заявка обрабатывается конвейером автоматически."}
+                {app.permissions.can_decide && takenByOther
+                  ? `Заявку рассматривает ${app.assignee}: решение принимает этот специалист или риск-менеджер.`
+                  : app.status === "NEEDS_INFO"
+                    ? "Ждём ответ клиента на запрос. После ответа заявка снова пройдёт автоматическую проверку."
+                    : ["OFFER_READY", "SIGNING", "DISBURSEMENT", "ISSUED"].includes(app.status)
+                      ? "Решение принято, дальше клиент работает с предложением."
+                      : app.status === "DECLINED"
+                        ? "По заявке оформлен отказ."
+                        : app.status === "CLIENT_DECLINED"
+                          ? "Клиент отказался от предложения банка."
+                          : app.status === "CANCELLED"
+                            ? "Клиент отозвал заявку — рассмотрение прекращено."
+                            : app.status === "EXPIRED"
+                              ? "Срок действия предложения истёк."
+                              : "Заявка обрабатывается конвейером автоматически."}
               </p>
               {app.offers.filter((o) => ["ACTIVE", "ACCEPTED"].includes(o.status)).map((o) => (
                 <p key={o.id} className="small" style={{ marginTop: 8 }}>
-                  {o.status === "ACCEPTED" ? "Принято клиентом" : "Предложено"}: {money(o.amount)} на {o.term_months} мес. под {pct(o.rate)}
+                  {o.status === "ACCEPTED" ? "Принято клиентом" : "Предложено"}: {money(o.amount)} на {o.term_months}&nbsp;мес. под {pct(o.rate)}
                 </p>
               ))}
               {app.loan && (

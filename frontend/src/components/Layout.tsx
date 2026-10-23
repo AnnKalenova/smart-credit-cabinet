@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, LogOut } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api/client";
 import type { Notification } from "../api/types";
 import { useAuth } from "../lib/auth";
@@ -108,8 +108,15 @@ export function Layout({ children, area }: { children: ReactNode; area: "client"
   const { me, company, setCompanyId, logout } = useAuth();
   const nav = useNavigate();
   const toast = useToast();
-  if (!me) return null;
+  const { pathname } = useLocation();
   const isClient = area === "client";
+  // во вкладке браузера видно, какой это кабинет
+  useEffect(() => {
+    document.title = isClient ? "Кредитный кабинет для бизнеса" : "Кредитный конвейер — рабочее место банка";
+  }, [isClient]);
+  if (!me) return null;
+  // страница заявки — часть раздела «Главная» у клиента и «Заявки» у банка
+  const inApps = (root: string) => ({ isActive }: { isActive: boolean }) => (isActive || pathname.startsWith(`${root}/applications/`) ? "active" : "");
   return (
     <>
       <header className="topbar">
@@ -120,14 +127,14 @@ export function Layout({ children, area }: { children: ReactNode; area: "client"
           <nav className="topnav" aria-label="Разделы">
             {isClient ? (
               <>
-                <NavLink to="/c" end>
+                <NavLink to="/c" end className={inApps("/c")}>
                   Главная
                 </NavLink>
                 <NavLink to="/c/match">Подобрать кредит</NavLink>
               </>
             ) : (
               <>
-                <NavLink to="/b" end>
+                <NavLink to="/b" end className={inApps("/b")}>
                   Заявки
                 </NavLink>
                 <NavLink to="/b/dashboard">Мониторинг</NavLink>

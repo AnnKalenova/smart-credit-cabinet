@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, CirclePlus, LogIn } from "lucide-react";
-import { useState, type CSSProperties, type FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { DemoAccount } from "../api/types";
 import { Brand } from "../components/Layout";
-import { useAuth } from "../lib/auth";
+import { forgetSessionExpired, sessionExpired, useAuth } from "../lib/auth";
 import { money, pct } from "../lib/format";
-import { errorText } from "../lib/toast";
+import { errorText, useToast } from "../lib/toast";
 
 const ROUTE = ["Задача", "Заявка", "Проверка", "Предложение", "Подпись и выдача"];
 const OFFER_STEP = 3;
@@ -83,6 +83,19 @@ function AccountCard({ a, disabled, onPick }: { a: DemoAccount; disabled: boolea
 export function LoginPage() {
   const { me, login } = useAuth();
   const nav = useNavigate();
+  const loc = useLocation();
+  const toast = useToast();
+  // после входа — на страницу, которую открывали по ссылке или где закончилась сессия (если она своей роли), иначе на главную
+  const from = (loc.state as { from?: string } | null)?.from;
+  const target = (role: string) => {
+    const home = role === "CLIENT" ? "/c" : "/b";
+    return from && (from === home || from.startsWith(`${home}/`)) ? from : home;
+  };
+  const [expired] = useState(sessionExpired);
+  useEffect(() => {
+    forgetSessionExpired();
+    document.title = "Вход — Кредитный кабинет для бизнеса";
+  }, []);
   const [form, setForm] = useState({ login: "", password: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -92,16 +105,19 @@ export function LoginPage() {
     retry: false,
   });
 
-  if (me) return <Navigate to={me.user.role === "CLIENT" ? "/c" : "/b"} replace />;
+  // вход завершился, пока страница ещё открыта, — сюда же, куда ведёт и сама кнопка входа
+  if (me) return <Navigate to={target(me.user.role)} replace />;
 
-  const doLogin = async (l: string, p: string) => {
+  const doLogin = async (l: string, p: string, oneClick = false) => {
     setBusy(true);
     setError(null);
     try {
       const who = await login(l, p);
-      nav(who.user.role === "CLIENT" ? "/c" : "/b", { replace: true });
+      nav(target(who.user.role), { replace: true });
     } catch (e) {
-      setError(errorText(e));
+      // ошибку входа в один клик показываем уведомлением: на телефоне форма с полем ошибки — ниже списка
+      if (oneClick) toast.error(e);
+      else setError(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -122,7 +138,7 @@ export function LoginPage() {
           <div className="brand">
             <Brand title="Кредитный кабинет" subtitle="для малого бизнеса" />
           </div>
-          <h1>Кредит для бизнеса — от задачи до денег на счёте</h1>
+          <h1>Кредит для бизнеса&nbsp;— от задачи до денег на счёте</h1>
           <p>
             Весь путь — в одном кабинете. Банк рассматривает заявку сразу: автоматически, когда это безопасно, и со специалистом, когда
             нужна экспертиза.
@@ -130,14 +146,20 @@ export function LoginPage() {
           <Showcase />
         </div>
       </aside>
-      <section className="login-main">
+      <main className="login-main">
         <div>
           <h2>Вход</h2>
           <p className="muted" style={{ marginTop: 6 }}>
             Войдите как предприниматель или как сотрудник банка.
           </p>
+          {expired && (
+            <div className="callout info" style={{ marginTop: 12 }}>
+              Сессия закончилась — войдите снова, чтобы продолжить.
+            </div>
+          )}
         </div>
-        <form className="stack" onSubmit={onSubmit} style={{ maxWidth: 420 }}>
+        <form className="stack login-form" onSubmit={onSubmit} style={{ maxWidth: 420 }}>
+          <h3 className="login-form-title">Вход по логину и паролю</h3>
           <div className="field">
             <label htmlFor="login">Логин</label>
             <input id="login" className="input" maxLength={64} value={form.login} onChange={(e) => setForm({ ...form, login: e.target.value })} autoComplete="username" />
@@ -170,18 +192,18 @@ export function LoginPage() {
             </div>
             <div className="accounts">
               {clients.map((a) => (
-                <AccountCard key={a.login} a={a} disabled={busy} onPick={(x) => doLogin(x.login, x.password)} />
+                <AccountCard key={a.login} a={a} disabled={busy} onPick={(x) => doLogin(x.login, x.password, true)} />
               ))}
             </div>
             <h3 style={{ marginTop: 8 }}>Сотрудники банка</h3>
             <div className="accounts">
               {staff.map((a) => (
-                <AccountCard key={a.login} a={a} disabled={busy} onPick={(x) => doLogin(x.login, x.password)} />
+                <AccountCard key={a.login} a={a} disabled={busy} onPick={(x) => doLogin(x.login, x.password, true)} />
               ))}
             </div>
           </div>
         )}
-      </section>
+      </main>
     </div>
   );
 }

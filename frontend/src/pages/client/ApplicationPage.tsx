@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
 import type { Application, Message } from "../../api/types";
-import { AmountInput, Conveyor, Field, Loader, Modal, PROCESSING, ProblemList, StatusChip, Timeline } from "../../components/ui";
+import { AmountInput, Conveyor, Field, Loader, Modal, PROCESSING, ProblemList, StatusChip, Timeline, useScrollToEnd } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
 import { dateTime, money, parseAmount, relativeDue } from "../../lib/format";
+import { useSingleFlight } from "../../lib/once";
 import { useToast } from "../../lib/toast";
 import { ConditionsBuilder, useBuilderAvailable } from "./ConditionsBuilder";
 import { DocumentsBlock, useRefreshApp } from "./DocumentsBlock";
@@ -89,7 +90,14 @@ function InfoRequestPanel({ app }: { app: Application }) {
   const [fields, setFields] = useState<Record<string, string>>({});
   const [problems, setProblems] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const docTypes = req.items.filter((i) => i.type === "DOCUMENT" && i.doc_type).map((i) => i.doc_type!) as string[];
+  // слот загрузки на каждый запрошенный документ — под тем названием, которым его назвал банк
+  const requestedDocs: { doc_type: string; label: string }[] = [];
+  for (const i of req.items) {
+    if (i.type !== "DOCUMENT" || !i.doc_type) continue;
+    const same = requestedDocs.find((d) => d.doc_type === i.doc_type);
+    if (same) same.label = `${same.label}; ${i.label}`;
+    else requestedDocs.push({ doc_type: i.doc_type, label: i.label });
+  }
   const fieldItems = req.items.filter((i) => i.type === "FIELD");
   const commentItems = req.items.filter((i) => i.type === "COMMENT");
 
@@ -125,7 +133,7 @@ function InfoRequestPanel({ app }: { app: Application }) {
             {i.why && <div className="muted">{i.why}</div>}
           </div>
         ))}
-        {docTypes.length > 0 && <DocumentsBlock app={app} editable extraTypes={docTypes} newSince={req.created_at} />}
+        {requestedDocs.length > 0 && <DocumentsBlock app={app} editable requested={requestedDocs} newSince={req.created_at} />}
         {fieldItems.map((i) => {
           const key = i.field ?? i.code;
           // сумму и срок отправленной заявки меняет только тот, кто вправе подписывать
@@ -170,6 +178,7 @@ function InfoRequestPanel({ app }: { app: Application }) {
 function ClosedPanel({ app }: { app: Application }) {
   const nav = useNavigate();
   const toast = useToast();
+  const once = useSingleFlight();
   const builder = useBuilderAvailable(app);
   const reapply = useMutation({
     mutationFn: () => api<Application>(`/api/v1/applications/${app.id}/reapply`, { method: "POST" }),
@@ -192,7 +201,7 @@ function ClosedPanel({ app }: { app: Application }) {
           </p>
           {next?.is_live ? (
             <Link className="btn btn-primary" style={{ marginTop: 16 }} to={`/c/applications/${next.id}`}>
-              Открыть новую заявку № {next.number}
+              Открыть новую заявку №&nbsp;{next.number}
             </Link>
           ) : (
             app.permissions.can_reapply && (
@@ -200,7 +209,7 @@ function ClosedPanel({ app }: { app: Application }) {
                 className={`btn ${app.status === "DECLINED" ? "btn-ghost" : "btn-primary"}`}
                 style={{ marginTop: 16 }}
                 disabled={reapply.isPending}
-                onClick={() => reapply.mutate()}
+                onClick={() => once(() => reapply.mutateAsync().catch(() => undefined))}
               >
                 <RotateCcw size={18} /> Подать новую заявку с этими данными
               </button>
@@ -229,6 +238,14 @@ function Messages({ app }: { app: Application }) {
     },
     onError: (e) => toast.error(e),
   });
+  const chatRef = useScrollToEnd<HTMLDivElement>(msgs.data?.length ?? 0);
+  // двойное нажатие или Enter, пока сообщение уходит, не отправляют его второй раз
+  const sending = useRef(false);
+  const sendOnce = () => {
+    if (sending.current || !text.trim()) return;
+    sending.current = true;
+    send.mutate(undefined, { onSettled: () => (sending.current = false) });
+  };
   if (!app.submitted_at) return null; // заявку банк ещё не видел — переписки по ней нет
   return (
     <section className="panel">
@@ -236,7 +253,7 @@ function Messages({ app }: { app: Application }) {
         <h3>Переписка с банком</h3>
         <MessageSquareText size={18} className="faint" />
       </div>
-      <div className="chat">
+      <div className="chat" ref={chatRef}>
         {(msgs.data ?? []).length === 0 && <p className="small faint">Вопрос по заявке можно задать здесь — без звонков и почты.</p>}
         {msgs.data?.map((m) => (
           <div key={m.id} className={`bubble ${m.author_role === "CLIENT" ? "mine" : ""}`}>
@@ -254,9 +271,9 @@ function Messages({ app }: { app: Application }) {
           maxLength={4000}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && text.trim() && send.mutate()}
+          onKeyDown={(e) => e.key === "Enter" && sendOnce()}
         />
-        <button className="btn btn-primary" disabled={!text.trim() || send.isPending} onClick={() => send.mutate()} aria-label="Отправить">
+        <button className="btn btn-primary" disabled={!text.trim() || send.isPending} onClick={sendOnce} aria-label="Отправить">
           <Send size={17} />
         </button>
       </div>
@@ -346,7 +363,7 @@ export function ApplicationPage() {
       <div className="crumbs">
         <Link to="/c">Главная</Link>
         <span>/</span>
-        <span>Заявка № {app.number}</span>
+        <span>Заявка №&nbsp;{app.number}</span>
       </div>
       <Conveyor
         number={app.number}
@@ -380,7 +397,11 @@ export function ApplicationPage() {
           )}
         </div>
         <aside className="stack">
-          {s === "DRAFT" && <DraftEstimate app={app} />}
+          {s === "DRAFT" && (
+            <div className="only-wide stack">
+              <DraftEstimate app={app} />
+            </div>
+          )}
           {s !== "DRAFT" && <Params app={app} />}
           <Messages app={app} />
           <section className="panel">

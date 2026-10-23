@@ -19,6 +19,8 @@ export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
     return e.problems.length ? `${e.message}: ${e.problems.join("; ")}` : e.message;
   }
+  // готовый текст из самого интерфейса (например, проверка размера файла) показываем как есть
+  if (typeof e === "string" && e) return e;
   return "Что-то пошло не так. Обновите страницу и попробуйте снова.";
 }
 

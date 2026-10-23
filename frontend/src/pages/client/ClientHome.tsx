@@ -32,7 +32,8 @@ export function ClientHome() {
     enabled: Boolean(company),
   });
 
-  if (!me || !company) return <Loader />;
+  // страница рисуется целиком, когда пришли профиль и заявки: иначе карточка лимита появляется сверху и сдвигает всё вниз
+  if (!me || !company || profile.isLoading || apps.isLoading) return <Loader />;
   const p = profile.data;
   // предварительно одобренный лимит — главная цифра клиента: на телефоне она идёт первой, до списков
   const hero = (where: string) =>
@@ -41,7 +42,7 @@ export function ClientHome() {
         <div className="label">{p.preapproved.product_name}, предварительно одобрено</div>
         <div className="big">{moneyShort(p.preapproved.amount)}</div>
         <p>
-          Ставка от {pct(p.preapproved.rate_from)} годовых, срок до {p.preapproved.max_term} мес. {p.preapproved.note}
+          Ставка от {pct(p.preapproved.rate_from)} годовых, срок до {p.preapproved.max_term}&nbsp;мес. {p.preapproved.note}
         </p>
         <button className="btn btn-white" onClick={() => nav(`/c/match?purpose=OTHER&amount=${p.preapproved!.amount}&term=12`)}>
           Посмотреть условия
@@ -84,10 +85,10 @@ export function ClientHome() {
               <Link key={a.id} to={`/c/applications/${a.id}`} className="list-app">
                 <div>
                   <div className="title">
-                    {a.product_name}, {money(a.amount)} на {a.term_months} мес.
+                    {a.product_name}, {money(a.amount)} на {a.term_months}&nbsp;мес.
                   </div>
                   <div className="small muted">
-                    № {a.number}, {a.submitted_at ? `отправлена ${dateTime(a.submitted_at)}` : `создана ${dateTime(a.created_at)}`}
+                    №&nbsp;{a.number}, {a.submitted_at ? `отправлена ${dateTime(a.submitted_at)}` : `создана ${dateTime(a.created_at)}`}
                   </div>
                   {a.stage_detail && PROCESSING.has(a.status) && <div className="small" style={{ marginTop: 4 }}>{a.stage_detail}</div>}
                 </div>
@@ -145,7 +146,7 @@ export function ClientHome() {
             {p && (
               <div style={{ margin: "8px 0 16px" }}>
                 <div className="stat-big">{moneyShort(p.turnover.avg_monthly)}</div>
-                <div className="small muted">в среднем в месяц за {p.turnover.months} мес.</div>
+                <div className="small muted">в среднем в месяц за {p.turnover.months}&nbsp;мес.</div>
               </div>
             )}
             {p ? <TurnoverBars series={p.turnover.series} /> : <Loader />}

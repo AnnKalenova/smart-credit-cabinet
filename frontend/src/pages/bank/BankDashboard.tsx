@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Dashboard } from "../../api/types";
-import { Loader } from "../../components/ui";
+import { LoadError, Loader } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
 import { dateTime, moneyShort } from "../../lib/format";
+import { useSingleFlight } from "../../lib/once";
 import { useToast } from "../../lib/toast";
 
 const SERVICES = [
@@ -26,6 +27,7 @@ function duration(minutes: number | null): string {
 function FaultSimulator() {
   const toast = useToast();
   const qc = useQueryClient();
+  const once = useSingleFlight();
   const faults = useQuery({
     queryKey: ["faults"],
     queryFn: () => api<{ faults: Record<string, { mode: string; seconds_left: number }> }>("/api/v1/bank/integrations/faults"),
@@ -47,29 +49,32 @@ function FaultSimulator() {
       <div className="stack-s" style={{ marginTop: 12 }}>
         {SERVICES.map((s) => {
           const f = faults.data?.faults[s.code];
+          // пока состояние сбоев не получено, не пишем «работает штатно» — это может быть неправдой
+          const known = faults.isSuccess;
+          const toggle = (mode: string) => once(() => set.mutateAsync({ service: s.code, mode }).catch(() => undefined));
           return (
             <div key={s.code} style={{ borderTop: "1px solid var(--rule)", paddingTop: 10 }}>
               <div className="row small">
                 <b>{s.label}</b>
                 <span className="spacer" />
                 <span className={f ? "neg xs" : "faint xs"}>
-                  {f ? `${FAULT_STATE[f.mode] ?? f.mode} ещё ${f.seconds_left} с` : "работает штатно"}
+                  {!known ? "состояние уточняется…" : f ? `${FAULT_STATE[f.mode] ?? f.mode} ещё ${f.seconds_left} с` : "работает штатно"}
                 </span>
               </div>
               <div className="row-wrap" style={{ gap: 6, marginTop: 6 }}>
                 {f ? (
-                  <button className="btn btn-primary btn-s" onClick={() => set.mutate({ service: s.code, mode: "ok" })}>
+                  <button className="btn btn-primary btn-s" onClick={() => toggle("ok")}>
                     Восстановить
                   </button>
                 ) : (
                   <>
-                    <button className="btn btn-ghost btn-s" onClick={() => set.mutate({ service: s.code, mode: "down" })}>
+                    <button className="btn btn-ghost btn-s" disabled={!known} onClick={() => toggle("down")}>
                       Отключить
                     </button>
-                    <button className="btn btn-ghost btn-s" onClick={() => set.mutate({ service: s.code, mode: "slow" })}>
+                    <button className="btn btn-ghost btn-s" disabled={!known} onClick={() => toggle("slow")}>
                       Замедлить
                     </button>
-                    <button className="btn btn-ghost btn-s" onClick={() => set.mutate({ service: s.code, mode: "empty" })}>
+                    <button className="btn btn-ghost btn-s" disabled={!known} onClick={() => toggle("empty")}>
                       Пустой ответ
                     </button>
                   </>
@@ -86,7 +91,7 @@ function FaultSimulator() {
 export function BankDashboard() {
   const { dict } = useAuth();
   const d = useQuery({ queryKey: ["dashboard"], queryFn: () => api<Dashboard>("/api/v1/bank/dashboard"), refetchInterval: 5000 });
-  if (!d.data) return <Loader />;
+  if (!d.data) return d.isError ? <LoadError onRetry={() => void d.refetch()} /> : <Loader />;
   const x = d.data;
   const funnelMax = Math.max(1, ...x.funnel.map((f) => f.count));
   return (
@@ -142,6 +147,7 @@ export function BankDashboard() {
           </section>
           <section className="panel">
             <h3>Заявки по статусам</h3>
+            {x.by_status.length === 0 && <p className="small muted" style={{ marginTop: 8 }}>Заявок пока нет.</p>}
             <table className="table" style={{ marginTop: 8 }}>
               <tbody>
                 {x.by_status.map((s) => (
@@ -157,11 +163,12 @@ export function BankDashboard() {
           </section>
           <section className="panel">
             <h3>Последние события</h3>
+            {x.recent_events.length === 0 && <p className="small muted" style={{ marginTop: 8 }}>Событий пока нет — подайте заявку от имени клиента.</p>}
             <ol className="timeline timeline-plain" style={{ marginTop: 12 }}>
               {x.recent_events.map((e) => (
                 <li key={e.id}>
                   <time>
-                    {dateTime(e.created_at)}, <Link to={`/b/applications/${e.application_id}`}>№ {e.application_number}</Link>
+                    {dateTime(e.created_at)}, <Link to={`/b/applications/${e.application_id}`}>№&nbsp;{e.application_number}</Link>
                   </time>
                   {e.title}
                 </li>
@@ -174,6 +181,7 @@ export function BankDashboard() {
             <h3>Внешние системы за час</h3>
             {x.integrations_last_hour.length === 0 && <p className="small muted">Вызовов не было</p>}
             {x.integrations_last_hour.length > 0 && (
+              <div className="table-wrap">
               <table className="table" style={{ marginTop: 8 }}>
                 <thead>
                   <tr>
@@ -194,6 +202,7 @@ export function BankDashboard() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </section>
           {dict?.demo_mode && <FaultSimulator />}

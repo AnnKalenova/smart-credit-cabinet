@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Layout } from "./components/Layout";
-import { Loader } from "./components/ui";
-import { useAuth } from "./lib/auth";
+import { Empty, Loader } from "./components/ui";
+import { sessionExpired, useAuth } from "./lib/auth";
 import { LoginPage } from "./pages/LoginPage";
 import { BankApplicationPage } from "./pages/bank/BankApplicationPage";
 import { BankDashboard } from "./pages/bank/BankDashboard";
@@ -13,11 +13,29 @@ import { ClientHome } from "./pages/client/ClientHome";
 import { LoanPage } from "./pages/client/LoanPage";
 import { MatchPage } from "./pages/client/MatchPage";
 
+/** Вход сохранён, но банк не отвечает: не выкидываем на страницу входа, а предлагаем повторить. */
+function Unreachable() {
+  const { retry } = useAuth();
+  return (
+    <main className="page">
+      <Empty title="Не удалось связаться с банком">
+        <p className="small">Проверьте интернет и попробуйте ещё раз — вход сохранён, заново вводить пароль не нужно.</p>
+        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={retry}>
+          Повторить
+        </button>
+      </Empty>
+    </main>
+  );
+}
+
 function Guard({ area, children }: { area: "client" | "bank"; children: ReactNode }) {
-  const { me, loading } = useAuth();
+  const { me, loading, unreachable, hadSession } = useAuth();
   const loc = useLocation();
   if (loading) return <Loader />;
-  if (!me) return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+  if (unreachable) return <Unreachable />;
+  // после входа вернём на эту страницу, если её открыли по ссылке или сессия закончилась сама; после «Выйти» — нет:
+  // следующий человек за этим компьютером попадёт на свою главную, а не на чужую заявку
+  if (!me) return <Navigate to="/login" replace state={!hadSession || sessionExpired() ? { from: loc.pathname } : undefined} />;
   const isClient = me.user.role === "CLIENT";
   if (area === "client" && !isClient) return <Navigate to="/b" replace />;
   if (area === "bank" && isClient) return <Navigate to="/c" replace />;
@@ -25,8 +43,9 @@ function Guard({ area, children }: { area: "client" | "bank"; children: ReactNod
 }
 
 function Home() {
-  const { me, loading } = useAuth();
+  const { me, loading, unreachable } = useAuth();
   if (loading) return <Loader />;
+  if (unreachable) return <Unreachable />;
   if (!me) return <Navigate to="/login" replace />;
   return <Navigate to={me.user.role === "CLIENT" ? "/c" : "/b"} replace />;
 }

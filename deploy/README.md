@@ -178,6 +178,7 @@ curl -I http://credit.example.ru                            # 308 и Location: h
 | Что | Команда |
 |---|---|
 | Обновить после новых коммитов | `git pull && bash deploy/compose.sh up -d --build` |
+| Применить изменённый `deploy/Caddyfile` | `bash deploy/compose.sh restart caddy` |
 | Посмотреть, что запущено | `bash deploy/compose.sh ps` |
 | Логи API или Caddy | `bash deploy/compose.sh logs -f api` или `bash deploy/compose.sh logs -f caddy` |
 | Вернуть демо-данные к исходным | `bash deploy/reset-demo.sh` |
@@ -233,4 +234,4 @@ curl -I http://credit.example.ru                            # 308 и Location: h
   - подключает интерфейс к сети `edge` с фиксированной подсетью;
   - монтирует `nginx/real-ip.conf`.
 - `nginx/real-ip.conf` нужен, чтобы ограничение попыток входа считалось для каждого посетителя, а не для всех сразу. nginx берёт адрес посетителя из заголовка `X-Forwarded-For`, только если заголовок пришёл от Caddy из сети `edge`. Подставить чужой адрес снаружи не выйдет: Caddy заменяет такой заголовок настоящим адресом соединения.
-- `Caddyfile` — домен, переадресация на HTTPS и заголовок `Strict-Transport-Security`. Остальные заголовки безопасности (CSP и другие) ставит nginx, как и на компьютере.
+- `Caddyfile` — домен, переадресация на HTTPS, заголовок `Strict-Transport-Security` и сжатие ответов. Сжимает Caddy: nginx за прокси ответы не сжимает. Остальные заголовки безопасности (CSP и другие) ставит nginx, как и на компьютере.

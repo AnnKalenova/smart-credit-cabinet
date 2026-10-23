@@ -159,7 +159,7 @@ function Verdict({ r, stale }: { r: SimResult; stale: boolean }) {
           <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
             {r.offers.map((o) => (
               <li key={`${o.product_code}-${o.amount}-${o.term_months}`}>
-                {o.product_name}: {money(o.amount)} на {o.term_months} мес. под {pct(o.rate)}
+                {o.product_name}: {money(o.amount)} на {o.term_months}&nbsp;мес. под {pct(o.rate)}
               </li>
             ))}
           </ul>
@@ -170,9 +170,14 @@ function Verdict({ r, stale }: { r: SimResult; stale: boolean }) {
 }
 
 /** Доступен ли конструктор для заявки (тот же запрос, что делает сам конструктор, — повторно не выполняется). */
+/** Версия заявки для кэша расчётов: статус и варианты банка. После решения специалиста расчёты запрашиваются заново. */
+function simVersion(app: Application): string {
+  return `${app.status}:${app.offers.map((o) => o.id).join(",")}`;
+}
+
 export function useBuilderAvailable(app: Application): boolean | undefined {
   const q = useQuery({
-    queryKey: ["simulation", app.id, "base"],
+    queryKey: ["simulation", app.id, simVersion(app), "base"],
     queryFn: () => api<Simulation>(`/api/v1/applications/${app.id}/simulation`, { method: "POST", json: {} }),
     retry: false,
     staleTime: 60_000,
@@ -193,8 +198,9 @@ export function ConditionsBuilder({ app }: { app: Application }) {
   const resultRef = useRef<HTMLDivElement>(null);
 
   // первый запрос — без параметров: сервер отвечает условиями заявки и границами продуктов
+  const version = simVersion(app);
   const initial = useQuery({
-    queryKey: ["simulation", app.id, "base"],
+    queryKey: ["simulation", app.id, version, "base"],
     queryFn: () => api<Simulation>(`/api/v1/applications/${app.id}/simulation`, { method: "POST", json: {} }),
     retry: false,
     staleTime: 60_000,
@@ -210,8 +216,8 @@ export function ConditionsBuilder({ app }: { app: Application }) {
   }
   // расчёт для условий заявки уже есть — второй раз за ним не ходим
   useEffect(() => {
-    if (initial.data) qc.setQueryData(["simulation", app.id, initial.data.base], initial.data);
-  }, [initial.data, app.id, qc]);
+    if (initial.data) qc.setQueryData(["simulation", app.id, version, initial.data.base], initial.data);
+  }, [initial.data, app.id, version, qc]);
 
   const products = initial.data?.products ?? [];
   const product = products.find((p) => p.code === cond?.product_code);
@@ -223,7 +229,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
 
   const debounced = useDebounced(cond, 350);
   const sim = useQuery({
-    queryKey: ["simulation", app.id, debounced],
+    queryKey: ["simulation", app.id, version, debounced],
     queryFn: () => api<Simulation>(`/api/v1/applications/${app.id}/simulation`, { method: "POST", json: debounced }),
     enabled: Boolean(debounced),
     placeholderData: keepPreviousData,
@@ -264,10 +270,10 @@ export function ConditionsBuilder({ app }: { app: Application }) {
         <h2 id="builder-title">Конструктор условий</h2>
         <div className="row-wrap" style={{ marginTop: 10 }}>
           <span className="small muted">
-            По этой заявке уже создана новая — № {live.number}, «{live.status_title.toLowerCase()}».
+            По этой заявке уже создана новая — №&nbsp;{live.number}, «{live.status_title.toLowerCase()}».
           </span>
           <Link className="btn btn-primary btn-s" to={`/c/applications/${live.id}`}>
-            Открыть заявку № {live.number}
+            Открыть заявку №&nbsp;{live.number}
           </Link>
         </div>
       </section>
@@ -336,7 +342,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
         method: "POST",
         json: { ...cond, replace_current: mode !== "reapply", expected_status: status },
       });
-      toast.ok(`Создали заявку № ${created.number}: проверьте данные, подпишите согласия и отправьте`);
+      toast.ok(`Создали заявку №\u00a0${created.number}: проверьте данные, подпишите согласия и отправьте`);
       refreshApp();
       nav(`/c/applications/${created.id}`);
     } catch (e) {
@@ -410,7 +416,9 @@ export function ConditionsBuilder({ app }: { app: Application }) {
           {amountError
             ? "Укажите сумму в пределах продукта — банк пересчитает решение."
             : willDecline
-              ? "На этих условиях банк не одобрит кредит — попробуйте подсказки выше."
+              ? (sim.data?.suggestions.length ?? 0) > 0
+                ? "На этих условиях банк не одобрит кредит — попробуйте подсказки выше."
+                : "На этих условиях банк не одобрит кредит — попробуйте меньшую сумму или больший срок."
               : nextSteps(r?.todo ?? [])}
         </span>
       </div>
@@ -637,7 +645,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
             {mode === "decline"
               ? "Текущее предложение банка закроется, и мы создадим новую заявку"
               : "Рассмотрение текущей заявки прекратится, и мы создадим новую"}{" "}
-            на выбранных условиях: {product.name.toLowerCase()}, {money(cond.amount)} на {cond.term_months} мес. {nextSteps(r?.todo ?? [])}
+            на выбранных условиях: {product.name.toLowerCase()}, {money(cond.amount)} на {cond.term_months}&nbsp;мес. {nextSteps(r?.todo ?? [])}
           </p>
         </Modal>
       )}
