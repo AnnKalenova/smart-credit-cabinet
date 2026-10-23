@@ -136,7 +136,7 @@ docker run --rm hello-world
 Если репозиторий публичный:
 
 ```bash
-git clone https://github.com/ВАШ-ЛОГИН/smart-credit-cabinet.git
+git clone https://github.com/AnnKalenova/smart-credit-cabinet.git
 ```
 
 Если приватный, сделайте ключ только для чтения:
@@ -145,7 +145,7 @@ git clone https://github.com/ВАШ-ЛОГИН/smart-credit-cabinet.git
 ssh-keygen -t ed25519 -f ~/.ssh/github -N ""
 cat ~/.ssh/github.pub      # GitHub → репозиторий → Settings → Deploy keys → Add deploy key (галочку записи не ставить)
 printf 'Host github.com\n  IdentityFile ~/.ssh/github\n' >> ~/.ssh/config
-git clone git@github.com:ВАШ-ЛОГИН/smart-credit-cabinet.git     # на вопрос про отпечаток ответить yes
+git clone git@github.com:AnnKalenova/smart-credit-cabinet.git     # на вопрос про отпечаток ответить yes
 ```
 
 Или просто загрузите архив со своего компьютера:

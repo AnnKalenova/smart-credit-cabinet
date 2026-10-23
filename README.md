@@ -57,7 +57,7 @@
 Нужен Docker Desktop (Windows, macOS) или Docker с Compose v2 (Linux) и свободные порты 8080, 8000, 8001.
 
 ```bash
-git clone <ссылка на репозиторий>
+git clone https://github.com/AnnKalenova/smart-credit-cabinet.git
 cd smart-credit-cabinet
 docker compose up -d --build
 ```
@@ -81,6 +81,12 @@ docker compose down -v                   # остановить и стерет�
 ```
 
 Как опубликовать на своём сервере с доменом и HTTPS, расписано по шагам в [deploy/README.md](deploy/README.md). Сертификат Let's Encrypt там получается и продлевается сам.
+
+**Если не запускается**
+
+- **Не скачиваются образы** (`403`, `timeout` или `TLS handshake timeout` от `registry-1.docker.io`): Docker Hub бывает недоступен. В Docker Desktop откройте Settings → Docker Engine, добавьте строку `"registry-mirrors": ["https://mirror.gcr.io"],` и нажмите Apply & restart. Потом снова `docker compose up -d --build`.
+- **Порт занят** (`port is already allocated`): создайте рядом с `docker-compose.yml` файл `.env` со строкой `WEB_PORT=8090` и запустите снова — кабинет откроется на http://localhost:8090. Так же меняются `API_PORT` и `MOCK_PORT`.
+- **Сервис не становится `healthy`**: `docker compose logs api worker` покажет причину, а `docker compose down -v && docker compose up -d --build` запустит всё с чистой базы.
 
 ## Кем войти
 

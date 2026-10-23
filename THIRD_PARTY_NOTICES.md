@@ -80,7 +80,7 @@
 | @fontsource-variable/golos-text — шрифт Golos Text (ParaType) | 5.3.0 | SIL Open Font License 1.1 |
 | @types/react, csstype | 19.3.0, 3.2.3 | MIT |
 
-Инструменты сборки (`devDependencies`, в итоговый образ не входят): vite 7.3.7, @vitejs/plugin-react 5.2.0, typescript 5.9.3 и их зависимости — 114 пакетов под MIT, ISC, Apache-2.0, BSD-3-Clause, CC-BY-4.0 (данные caniuse-lite).
+Инструменты сборки и проверки кода (`devDependencies`, в итоговый образ не входят): vite 7.3.7, @vitejs/plugin-react 5.2.0, typescript 5.9.3, eslint 10.12.0, @eslint/js 10.0.1, typescript-eslint 8.71.1, eslint-plugin-react-hooks 7.1.1, globals 17.13.0 и их зависимости — 209 пакетов под MIT, Apache-2.0, ISC, BSD-2-Clause, BSD-3-Clause, BlueOak-1.0.0, CC-BY-4.0 (данные caniuse-lite).
 
 ## Визуальный стиль
 
@@ -91,7 +91,7 @@
 | Инструмент | Лицензия | Для чего |
 |---|---|---|
 | uv | MIT / Apache-2.0 | генерация lock-файлов Python с хешами |
-| Playwright | Apache-2.0 | UI-прогон сценариев и скриншоты (`e2e/ui_tour.py`) |
+| Playwright | Apache-2.0 | проверки интерфейса в браузере в CI (`e2e/ui_checks.py`), UI-прогон сценариев и скриншоты (`e2e/ui_tour.py`) |
 | newman | Apache-2.0 | запуск Postman-коллекции из командной строки |
 | mermaid | MIT | рендер диаграмм для документации (`tools/render_diagrams.py`) |
 | [UI/UX Pro Max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill), [Taste](https://github.com/Leonxlnx/taste-skill) | MIT | чек-листы по интерфейсам (контраст, состояния, мобильная вёрстка), по которым проверялся дизайн |
