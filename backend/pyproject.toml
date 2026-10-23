@@ -1,6 +1,6 @@
 [project]
 name = "smart-credit-cabinet-backend"
-version = "1.0.0"
+version = "1.1.0"
 description = "Кредитный конвейер для МСБ: API, воркер, доменная логика"
 requires-python = ">=3.13"
 # Точные версии и хеши зависимостей — в requirements.txt / requirements-dev.txt (lock-файлы).

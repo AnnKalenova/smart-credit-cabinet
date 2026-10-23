@@ -46,7 +46,7 @@ services:
     build:
       context: .
       dockerfile: integrations-mock/Dockerfile
-    image: smart-credit-cabinet/integrations-mock:1.0.0
+    image: smart-credit-cabinet/integrations-mock:1.1.0
     environment:
       MOCK_LATENCY_MIN_MS: ${MOCK_LATENCY_MIN_MS:-150}
       MOCK_LATENCY_MAX_MS: ${MOCK_LATENCY_MAX_MS:-600}
@@ -58,7 +58,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    image: smart-credit-cabinet/backend:1.0.0
+    image: smart-credit-cabinet/backend:1.1.0
     command: ["api"]
     environment:
       <<: *backend-env
@@ -77,7 +77,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    image: smart-credit-cabinet/backend:1.0.0
+    image: smart-credit-cabinet/backend:1.1.0
     command: ["worker"]
     environment:
       <<: *backend-env
@@ -100,7 +100,7 @@ services:
   web:
     build:
       context: ./frontend
-    image: smart-credit-cabinet/web:1.0.0
+    image: smart-credit-cabinet/web:1.1.0
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:
