@@ -15,9 +15,10 @@ export function moneyShort(v: number): string {
   return `${Math.round(v)} ₽`;
 }
 
+/** Проценты без лишнего нуля: «22%», «21,5%». */
 export function pct(v: number | null | undefined, digits = 1): string {
   if (v === null || v === undefined) return "—";
-  return `${v.toLocaleString("ru-RU", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
+  return `${v.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: digits })}%`;
 }
 
 export function date(v: string | null | undefined): string {

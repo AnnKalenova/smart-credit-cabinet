@@ -31,6 +31,8 @@ export interface DemoAccount {
   title: string;
   company: string | null;
   scenario: string;
+  scenario_title?: string | null;
+  scenario_hint?: string | null;
 }
 
 export interface Purpose {
@@ -284,6 +286,68 @@ export interface Application extends ApplicationSummary {
   };
   review_due_at: string | null;
   parent_id: string | null;
+  next_application: { id: string; number: string; status: string; status_title: string; is_live: boolean } | null;
+}
+
+// ------------------------------------------------------------------ конструктор условий
+
+export interface Conditions {
+  product_code: string;
+  amount: number;
+  term_months: number;
+  has_collateral: boolean;
+  owner_guarantee: boolean;
+}
+
+export type SimOutcome = "APPROVE" | "COUNTER_OFFER" | "MANUAL_REVIEW" | "NEEDS_INFO" | "DECLINE";
+
+export interface SimResult extends Conditions {
+  product_name: string;
+  repayment_type: "ANNUITY" | "REVOLVING";
+  collateral_option: "NONE" | "OPTIONAL" | "REQUIRED";
+  outcome: SimOutcome;
+  verdict: string;
+  explanation: string;
+  automatic: boolean;
+  fixable: boolean;
+  grade: string;
+  rate: number;
+  monthly_payment: number;
+  total_interest: number;
+  max_amount: number | null;
+  payment_share: number | null;
+  payment_share_cap: number;
+  offers: {
+    label: string;
+    product_code: string;
+    product_name: string;
+    amount: number;
+    term_months: number;
+    rate: number;
+    monthly_payment: number;
+    is_counter: boolean;
+  }[];
+  key_rate: number;
+}
+
+export interface SimProduct {
+  code: string;
+  name: string;
+  min_amount: number;
+  max_amount: number;
+  min_term: number;
+  max_term: number;
+  terms: number[];
+  collateral: "NONE" | "OPTIONAL" | "REQUIRED";
+  repayment_type: "ANNUITY" | "REVOLVING";
+  auto_decision_limit: number;
+}
+
+export interface Simulation {
+  base: Conditions;
+  result: SimResult;
+  suggestions: { code: string; title: string; effect: string; params: Conditions; result: SimResult }[];
+  products: SimProduct[];
 }
 
 export interface SignChallenge {
@@ -457,7 +521,7 @@ export interface BankApplication extends BankRow {
   documents: DocumentInfo[];
   consents: { type: string; signed_at: string; signed_by: string }[];
   loan: Loan | null;
-  permissions: { can_decide: boolean; can_rerun: boolean };
+  permissions: { can_decide: boolean; can_rerun: boolean; can_retry_disbursement: boolean };
   pricing_hints: PricingHint[];
   key_rate: number;
 }

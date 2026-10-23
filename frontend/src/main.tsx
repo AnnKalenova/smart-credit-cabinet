@@ -1,5 +1,4 @@
 import "@fontsource-variable/golos-text";
-import "@fontsource-variable/unbounded";
 import "./styles.css";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

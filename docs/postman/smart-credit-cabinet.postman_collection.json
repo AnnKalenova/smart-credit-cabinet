@@ -493,7 +493,7 @@
                 "sign-challenges"
               ]
             },
-            "description": "В демо-режиме код возвращается в ответе: SMS и почта не используются в сценарии.",
+            "description": "На демо-стенде код подтверждения возвращается в ответе (поле demo_code).",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"purpose\": \"CONSENTS\"\n}"
@@ -961,8 +961,8 @@
       ]
     },
     {
-      "name": "2. Встречное предложение — ИП Кузнецова",
-      "description": "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму.",
+      "name": "2. Встречное предложение и конструктор условий — ИП Кузнецова",
+      "description": "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму. Конструктор показывает, что на 18 мес. банк одобрит автоматически, — новая заявка на этих условиях одобряется.",
       "item": [
         {
           "name": "Вход: Кузнецова",
@@ -1008,7 +1008,7 @@
               "type": "noauth"
             }
           },
-          "id": "17a6677d-f1bf-5273-a6ab-f7f91ec20da5"
+          "id": "c5888c82-8ea1-5ab3-b4d6-544e4909bda4"
         },
         {
           "name": "Компании пользователя (Кузнецова)",
@@ -1051,7 +1051,7 @@
               ]
             }
           },
-          "id": "bd850e72-aa14-5ef2-8103-26d5d684b0d2"
+          "id": "763cbd14-ddd6-500c-92bd-722d13c1cf9c"
         },
         {
           "name": "Создать черновик",
@@ -1102,7 +1102,7 @@
               ]
             }
           },
-          "id": "7494b6ae-85fe-51b0-adbd-d37c1d8395ce"
+          "id": "e124a27f-efbc-587b-a482-d3a1d49948f1"
         },
         {
           "name": "Получить код подписи согласий",
@@ -1141,7 +1141,7 @@
                 "sign-challenges"
               ]
             },
-            "description": "В демо-режиме код возвращается в ответе: SMS и почта не используются в сценарии.",
+            "description": "На демо-стенде код подтверждения возвращается в ответе (поле demo_code).",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"purpose\": \"CONSENTS\"\n}"
@@ -1157,7 +1157,7 @@
               ]
             }
           },
-          "id": "23b89017-4d38-54a3-b894-5e8b9b8d193c"
+          "id": "1345428c-5980-50c9-ba3b-0220e1cda5d0"
         },
         {
           "name": "Подписать согласия",
@@ -1210,7 +1210,7 @@
               ]
             }
           },
-          "id": "4403ac3a-a143-5b7b-90de-d82f44a91255"
+          "id": "dc190590-1076-5a8b-ae69-24871a1fc03a"
         },
         {
           "name": "Отправить заявку",
@@ -1253,7 +1253,7 @@
               ]
             }
           },
-          "id": "0918ebd3-12c4-503c-90d0-aca5a199ad7f"
+          "id": "273c72bf-6ebf-5d7d-893b-6fd723ad8b61"
         },
         {
           "name": "Дождаться решения",
@@ -1307,7 +1307,7 @@
               ]
             }
           },
-          "id": "cc2909de-a5e9-5b54-b4f3-1ca8b17a80ab"
+          "id": "2f4124b7-7a38-5e3d-8a68-7f842f34980b"
         },
         {
           "name": "Проверить встречные варианты",
@@ -1352,7 +1352,466 @@
               ]
             }
           },
-          "id": "135758f6-41d2-54d8-85fd-85a15781696d"
+          "id": "4538b00b-d1ed-5549-9013-d66372adb681"
+        },
+        {
+          "name": "Конструктор условий: текущие условия",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Тот же исход, что у заявки', () => pm.expect(s.result.outcome).to.eql('COUNTER_OFFER'));",
+                  "pm.test('Нагрузка выше 40%', () => pm.expect(s.result.payment_share).to.be.above(s.result.payment_share_cap));",
+                  "pm.test('Есть подсказки', () => pm.expect(s.suggestions.length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/simulation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "simulation"
+              ]
+            },
+            "description": "Решение банка при текущих условиях заявки и подсказки, что изменить. Ничего не сохраняет.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "68bba6e6-1ca7-5264-a97f-12c31e6a532d"
+        },
+        {
+          "name": "Конструктор условий: срок 18 мес.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Одобрим автоматически', () => pm.expect(s.result.outcome).to.eql('APPROVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/simulation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "simulation"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"term_months\": 18,\n  \"with_suggestions\": false\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "432160bd-940f-5582-a394-c82481061f9c"
+        },
+        {
+          "name": "Отказаться от предложения",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/offers/decline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "offers",
+                "decline"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "e85d63c5-ca95-59c2-972b-0364d90dc338"
+        },
+        {
+          "name": "Новая заявка на выбранных условиях",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const n = pm.response.json();",
+                  "pm.test('Черновик на 18 мес.', () => { pm.expect(n.status).to.eql('DRAFT'); pm.expect(n.term_months).to.eql(18); });",
+                  "pm.test('Связан с исходной заявкой', () => pm.expect(n.parent_id).to.eql(pm.collectionVariables.get('appId')));",
+                  "pm.collectionVariables.set('appId', n.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/reapply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "reapply"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"term_months\": 18\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "fed33629-a11c-5cef-8a02-877a68e62bc4"
+        },
+        {
+          "name": "Получить код подписи согласий",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('challengeId', r.challenge_id);",
+                  "pm.collectionVariables.set('code', r.demo_code);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/sign-challenges",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "sign-challenges"
+              ]
+            },
+            "description": "На демо-стенде код подтверждения возвращается в ответе (поле demo_code).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purpose\": \"CONSENTS\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "3a6a285c-2f0f-5ae8-bb25-25d12d868e40"
+        },
+        {
+          "name": "Подписать согласия",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Два согласия', () => pm.expect(pm.response.json().consents.length).to.eql(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/consents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "consents"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"challenge_id\": \"{{challengeId}}\",\n  \"code\": \"{{code}}\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "9157f06f-dcdc-530b-9204-67ee2640a29b"
+        },
+        {
+          "name": "Отправить заявку",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/submit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "submit"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "a4e88aba-6e6f-5734-9ccf-92a70caf0738"
+        },
+        {
+          "name": "Дождаться решения по новой заявке",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const app = pm.response.json();",
+                  "const processing = [\"SUBMITTED\", \"PRECHECK\", \"ENRICHMENT\", \"SCORING\", \"DECISION\", \"DISBURSEMENT\"];",
+                  "const tries = Number(pm.collectionVariables.get('pollTries') || 0);",
+                  "if (processing.includes(app.status) && tries < 60) {",
+                  "  pm.collectionVariables.set('pollTries', tries + 1);",
+                  "  setTimeout(() => {}, 1500);",
+                  "  pm.execution.setNextRequest(pm.info.requestId);",
+                  "  return;",
+                  "}",
+                  "pm.collectionVariables.set('pollTries', 0);",
+                  "pm.test('Статус OFFER_READY', () => pm.expect(app.status).to.eql('OFFER_READY'));",
+                  "if (app.offers && app.offers.length) pm.collectionVariables.set('offerId', app.offers[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}"
+              ]
+            },
+            "description": "Опрашивает заявку каждые 1,5 с, пока она в обработке. Ожидаемый итог: OFFER_READY.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "bab89247-705d-56e6-9580-427401e2097c"
+        },
+        {
+          "name": "Проверить автоматическое одобрение",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const app = pm.response.json();",
+                  "pm.test('Одобрено, как показал конструктор', () => pm.expect(app.decision.outcome).to.eql('APPROVE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "84ab55fb-a078-58d2-bd4a-7b2cab63a523"
         }
       ]
     },
@@ -1552,7 +2011,7 @@
           "id": "64db4a0b-990d-537e-8781-93c2c28a0fa3"
         },
         {
-          "name": "Приложить демо-документ SUPPLIER_INVOICE",
+          "name": "Приложить пример документа SUPPLIER_INVOICE",
           "event": [
             {
               "listen": "test",
@@ -1599,10 +2058,10 @@
               ]
             }
           },
-          "id": "b37dde8f-530e-5368-9b9f-423c8e5f4f12"
+          "id": "a17d3996-5fa2-5a31-be36-ca347be36053"
         },
         {
-          "name": "Приложить демо-документ FIN_STATEMENTS",
+          "name": "Приложить пример документа FIN_STATEMENTS",
           "event": [
             {
               "listen": "test",
@@ -1649,7 +2108,7 @@
               ]
             }
           },
-          "id": "4ee1dc77-93b3-5cda-bf92-1b87cd9936b2"
+          "id": "2de3aeca-a876-5f6a-b7ff-de7e6c73b64e"
         },
         {
           "name": "Получить код подписи согласий",
@@ -1688,7 +2147,7 @@
                 "sign-challenges"
               ]
             },
-            "description": "В демо-режиме код возвращается в ответе: SMS и почта не используются в сценарии.",
+            "description": "На демо-стенде код подтверждения возвращается в ответе (поле demo_code).",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"purpose\": \"CONSENTS\"\n}"
@@ -2385,7 +2844,7 @@
                 "sign-challenges"
               ]
             },
-            "description": "В демо-режиме код возвращается в ответе: SMS и почта не используются в сценарии.",
+            "description": "На демо-стенде код подтверждения возвращается в ответе (поле demo_code).",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"purpose\": \"CONSENTS\"\n}"
@@ -2554,7 +3013,7 @@
           "id": "59475bb5-15cc-52da-a948-0cd0913b6159"
         },
         {
-          "name": "Приложить демо-документ BANK_STATEMENT",
+          "name": "Приложить пример документа BANK_STATEMENT",
           "event": [
             {
               "listen": "test",
@@ -2601,7 +3060,7 @@
               ]
             }
           },
-          "id": "7ab03f72-9fa8-5214-b57b-361ded0a9bfb"
+          "id": "3e7a8c7e-222e-5a26-a7b5-d5aa201f43d0"
         },
         {
           "name": "Ответить на запрос",
@@ -2892,7 +3351,7 @@
                 "sign-challenges"
               ]
             },
-            "description": "В демо-режиме код возвращается в ответе: SMS и почта не используются в сценарии.",
+            "description": "На демо-стенде код подтверждения возвращается в ответе (поле demo_code).",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"purpose\": \"CONSENTS\"\n}"

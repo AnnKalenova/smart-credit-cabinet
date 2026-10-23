@@ -92,7 +92,7 @@ function DecisionForm({ app }: { app: BankApplication }) {
   const updateOffer = (i: number, patch: Partial<OfferDraft>) => setOffers(offers.map((o, j) => (i === j ? { ...o, ...patch } : o)));
 
   return (
-    <section className="panel" style={{ borderColor: "var(--ink)" }}>
+    <section className="panel">
       <h2>Решение</h2>
       <div className="segmented" style={{ marginTop: 12 }} role="tablist">
         {(
@@ -712,6 +712,11 @@ export function BankApplicationPage() {
           </p>
         </div>
         <div className="row-wrap">
+          {app.permissions.can_retry_disbursement && (
+            <button className="btn btn-signal" onClick={() => act("rerun", "Выдача поставлена в очередь повторно")}>
+              <RotateCcw size={17} /> Повторить выдачу
+            </button>
+          )}
           {app.permissions.can_rerun && app.decisions[0]?.reasons.some((r) => r.code === "integration_unavailable") && (
             <button className="btn btn-ghost" onClick={() => act("rerun", "Автоматическая проверка запущена повторно")}>
               <RotateCcw size={17} /> Повторить проверку
@@ -785,6 +790,14 @@ export function BankApplicationPage() {
           ) : (
             <section className="panel">
               <h3>Решение</h3>
+              {app.permissions.can_retry_disbursement && (
+                <div className="callout bad" style={{ marginTop: 10 }}>
+                  <span>
+                    Выдача не прошла: АБС не ответила после всех попыток. Когда она снова доступна, нажмите «Повторить выдачу» —
+                    запрос идемпотентен, второго кредита не будет.
+                  </span>
+                </div>
+              )}
               <p className="small muted" style={{ marginTop: 8 }}>
                 {app.status === "NEEDS_INFO"
                   ? "Ждём ответ клиента на запрос. После ответа заявка снова пройдёт автоматическую проверку."

@@ -319,7 +319,7 @@ export function SigningPanel({ app }: { app: Application }) {
       if (e instanceof ApiError && e.status === 409) refresh();
       throw e;
     }
-    toast.ok("Договор подписан — перечисляем деньги");
+    toast.ok(offer?.repayment_type === "REVOLVING" ? "Договор подписан — подключаем овердрафт" : "Договор подписан — перечисляем деньги");
     refresh();
   };
   const back = async () => {
@@ -389,7 +389,11 @@ export function SigningPanel({ app }: { app: Application }) {
             </dl>
             <h3>График платежей</h3>
             <ScheduleTable rows={contract.data.schedule} revolving={contract.data.offer.repayment_type === "REVOLVING"} />
-            <p className="xs faint">Проект договора сформирован прототипом. Реальная интеграция с электронной подписью не выполняется.</p>
+            <p className="xs faint">
+              {contract.data.offer.repayment_type === "REVOLVING"
+                ? "Лимит действует с даты подписания договора. Проценты начисляются только на использованную сумму."
+                : "График построен от даты подписания договора. Досрочно погасить кредит можно в любой день без комиссии."}
+            </p>
           </div>
         </Modal>
       )}
@@ -405,7 +409,7 @@ export function IssuedPanel({ app }: { app: Application }) {
       <section className="panel">
         <div className="row">
           <span className="spin" />
-          <span>Открываем ссудный счёт и перечисляем деньги. Обычно это меньше минуты.</span>
+          <span>{app.status_view.now} {app.status_view.next}</span>
         </div>
       </section>
     );

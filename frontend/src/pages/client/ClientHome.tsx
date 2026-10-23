@@ -60,7 +60,7 @@ export function ClientHome() {
             {apps.data && apps.data.length === 0 && (
               <Empty title="Заявок пока нет">
                 <p className="small">Расскажите, на что нужны деньги, — подберём продукт и заполним заявку данными компании.</p>
-                <Link to="/c/match" className="btn btn-signal" style={{ marginTop: 14 }}>
+                <Link to="/c/match" className="btn btn-primary" style={{ marginTop: 16 }}>
                   Подобрать кредит
                 </Link>
               </Empty>
@@ -124,18 +124,13 @@ export function ClientHome() {
 
         <aside className="stack">
           {p?.preapproved && (
-            <section className="hero-limit">
-              <div className="small" style={{ color: "rgba(255,255,255,.7)" }}>
-                {p.preapproved.product_name}: предварительно доступно
-              </div>
+            <section className="hero-limit" aria-label="Предварительно одобренный лимит">
+              <div className="label">{p.preapproved.product_name}, предварительно одобрено</div>
               <div className="big">{moneyShort(p.preapproved.amount)}</div>
               <p>
                 Ставка от {pct(p.preapproved.rate_from)} годовых, срок до {p.preapproved.max_term} мес. {p.preapproved.note}
               </p>
-              <button
-                className="btn btn-signal"
-                onClick={() => nav(`/c/match?purpose=OTHER&amount=${p.preapproved!.amount}&term=12`)}
-              >
+              <button className="btn btn-white" onClick={() => nav(`/c/match?purpose=OTHER&amount=${p.preapproved!.amount}&term=12`)}>
                 Посмотреть условия
               </button>
             </section>
@@ -144,9 +139,10 @@ export function ClientHome() {
           <section className="panel">
             <h3>Поступления на счёт</h3>
             {p && (
-              <p className="small muted" style={{ margin: "4px 0 14px" }}>
-                В среднем {moneyShort(p.turnover.avg_monthly)} в месяц
-              </p>
+              <div style={{ margin: "8px 0 16px" }}>
+                <div className="stat-big">{moneyShort(p.turnover.avg_monthly)}</div>
+                <div className="small muted">в среднем в месяц за {p.turnover.months} мес.</div>
+              </div>
             )}
             {p ? <TurnoverBars series={p.turnover.series} /> : <Loader />}
             <p className="xs faint" style={{ marginTop: 10 }}>
@@ -179,8 +175,8 @@ export function ClientHome() {
             </section>
           )}
           {dict && (
-            <p className="xs faint">
-              Ключевая ставка Банка России: {pct(dict.key_rate, 2)}. {dict.key_rate_note}.
+            <p className="xs faint" style={{ padding: "0 4px" }}>
+              Ключевая ставка Банка России — {pct(dict.key_rate, 2)}. {dict.key_rate_note}.
             </p>
           )}
         </aside>

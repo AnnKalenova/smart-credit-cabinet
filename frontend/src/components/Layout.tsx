@@ -46,7 +46,7 @@ function Notifications() {
         <div className="dropdown">
           <div className="dropdown-head">
             <b>Уведомления</b>
-            <span className="faint xs">Все события по заявкам — здесь, без SMS и почты</span>
+            <span className="faint xs">События по заявкам компании</span>
           </div>
           <div style={{ maxHeight: 380, overflow: "auto" }}>
             {(data?.items ?? []).length === 0 && <p className="empty small">Новых событий нет</p>}
@@ -73,26 +73,32 @@ function Notifications() {
   );
 }
 
+/** Знак кабинета: три ступени «конвейера» на красной плашке. */
+export function Brand({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <>
+      <span className="brand-mark" aria-hidden>
+        <span />
+      </span>
+      <span>
+        {title}
+        <small>{subtitle}</small>
+      </span>
+    </>
+  );
+}
+
 export function Layout({ children, area }: { children: ReactNode; area: "client" | "bank" }) {
-  const { me, company, setCompanyId, logout, dict } = useAuth();
+  const { me, company, setCompanyId, logout } = useAuth();
   const nav = useNavigate();
   if (!me) return null;
   const isClient = area === "client";
   return (
     <>
-      {dict?.demo_mode && (
-        <div className="demo-strip">
-          Прототип для хакатона: данные синтетические, внешние системы банка заменены симуляторами
-        </div>
-      )}
       <header className="topbar">
         <div className="topbar-inner">
-          <Link to={isClient ? "/c" : "/b"} className="brand">
-            <span className="brand-mark" aria-hidden>
-              <span />
-            </span>
-            {isClient ? "Кредитный кабинет" : "Кредитный конвейер"}
-            <small>{isClient ? "для бизнеса" : "рабочее место банка"}</small>
+          <Link to={isClient ? "/c" : "/b"} className="brand" aria-label={isClient ? "Кредитный кабинет, главная" : "Кредитный конвейер, заявки"}>
+            <Brand title={isClient ? "Кредитный кабинет" : "Кредитный конвейер"} subtitle={isClient ? "для бизнеса" : "рабочее место банка"} />
           </Link>
           <nav className="topnav" aria-label="Разделы">
             {isClient ? (

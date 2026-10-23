@@ -8,6 +8,7 @@ import { Conveyor, Field, Loader, Modal, PROCESSING, ProblemList, StatusChip, Ti
 import { useAuth } from "../../lib/auth";
 import { dateTime, formatInputAmount, money, parseAmount, relativeDue } from "../../lib/format";
 import { useToast } from "../../lib/toast";
+import { ConditionsBuilder, useBuilderAvailable } from "./ConditionsBuilder";
 import { DocumentsBlock, useRefreshApp } from "./DocumentsBlock";
 import { DraftEditor, DraftEstimate } from "./DraftEditor";
 import { DecisionExplain, IssuedPanel, OfferChoice, SigningPanel } from "./OfferPanels";
@@ -31,7 +32,7 @@ function stepState(app: Application, key: string): "done" | "now" | "wait" {
   if (["EGRUL", "FNS", "BKI"].includes(key)) {
     if (statusIdx > 2) return "done";
     if (statusIdx < 2) return "wait";
-    const current = detail.includes("ЕГРЮЛ") ? "EGRUL" : detail.includes("ФНС") ? "FNS" : detail.includes("БКИ") || detail.includes("кредитных") ? "BKI" : "EGRUL";
+    const current = detail.includes("ЕГРЮЛ") || detail.includes("ЕГРИП") ? "EGRUL" : detail.includes("ФНС") ? "FNS" : detail.includes("БКИ") || detail.includes("кредитных") ? "BKI" : "EGRUL";
     const seq = ["EGRUL", "FNS", "BKI"];
     return seq.indexOf(key) < seq.indexOf(current) ? "done" : key === current ? "now" : "wait";
   }
@@ -112,7 +113,7 @@ function InfoRequestPanel({ app }: { app: Application }) {
   };
 
   return (
-    <section className="panel" style={{ borderColor: "#e9cf74", boxShadow: "0 0 0 3px var(--signal-soft)" }}>
+    <section className="panel panel-alert">
       <h2>Банку нужны уточнения</h2>
       <p className="muted" style={{ marginTop: 6 }}>
         {req.message} <span className="faint small">({req.requested_by}, {dateTime(req.created_at)})</span>
@@ -161,27 +162,39 @@ function InfoRequestPanel({ app }: { app: Application }) {
 function ClosedPanel({ app }: { app: Application }) {
   const nav = useNavigate();
   const toast = useToast();
+  const builder = useBuilderAvailable(app);
   const reapply = useMutation({
     mutationFn: () => api<Application>(`/api/v1/applications/${app.id}/reapply`, { method: "POST" }),
     onSuccess: (a) => nav(`/c/applications/${a.id}`),
     onError: (e) => toast.error(e),
   });
+  const next = app.next_application;
   return (
     <div className="stack">
       {app.status === "DECLINED" && <DecisionExplain app={app} />}
-      <section className="panel">
-        <h2>{app.status === "DECLINED" ? "Что можно сделать" : "Заявка закрыта"}</h2>
-        <p className="muted" style={{ marginTop: 6 }}>
-          {app.status === "DECLINED"
-            ? "Можно подать новую заявку на меньшую сумму, с обеспечением или после того, как изменятся обстоятельства, указанные выше."
-            : app.status_view.next}
-        </p>
-        {app.permissions.can_reapply && (
-          <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={reapply.isPending} onClick={() => reapply.mutate()}>
-            <RotateCcw size={18} /> Подать новую заявку с этими данными
-          </button>
-        )}
-      </section>
+      {builder ? (
+        <ConditionsBuilder app={app} />
+      ) : builder === false ? (
+        <section className="panel">
+          <h2>{app.status === "DECLINED" ? "Что можно сделать" : "Заявка закрыта"}</h2>
+          <p className="muted" style={{ marginTop: 6 }}>
+            {app.status === "DECLINED"
+              ? "Можно подать новую заявку, когда изменятся обстоятельства, указанные выше."
+              : app.status_view.next}
+          </p>
+          {next?.is_live ? (
+            <Link className="btn btn-primary" style={{ marginTop: 16 }} to={`/c/applications/${next.id}`}>
+              Открыть новую заявку № {next.number}
+            </Link>
+          ) : (
+            app.permissions.can_reapply && (
+              <button className="btn btn-primary" style={{ marginTop: 16 }} disabled={reapply.isPending} onClick={() => reapply.mutate()}>
+                <RotateCcw size={18} /> Подать новую заявку с этими данными
+              </button>
+            )
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -337,8 +350,10 @@ export function ApplicationPage() {
           {s === "DRAFT" && <DraftEditor app={app} />}
           {["SUBMITTED", "PRECHECK", "ENRICHMENT", "SCORING", "DECISION"].includes(s) && <ProcessingPanel app={app} />}
           {s === "MANUAL_REVIEW" && <ReviewPanel app={app} />}
+          {s === "MANUAL_REVIEW" && <ConditionsBuilder app={app} />}
           {s === "NEEDS_INFO" && app.info_request && <InfoRequestPanel app={app} />}
           {s === "OFFER_READY" && <OfferChoice app={app} />}
+          {s === "OFFER_READY" && <ConditionsBuilder app={app} />}
           {s === "SIGNING" && <SigningPanel app={app} />}
           {(s === "DISBURSEMENT" || s === "ISSUED") && <IssuedPanel app={app} />}
           {["DECLINED", "EXPIRED", "CANCELLED", "CLIENT_DECLINED"].includes(s) && <ClosedPanel app={app} />}

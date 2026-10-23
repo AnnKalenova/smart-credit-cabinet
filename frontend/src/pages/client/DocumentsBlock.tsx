@@ -19,6 +19,7 @@ export function useRefreshApp(appId: string) {
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 function UploadButtons({ app, docType, editable }: { app: Application; docType: string; editable: boolean }) {
+  const { dict } = useAuth();
   const toast = useToast();
   const refresh = useRefreshApp(app.id);
   const input = useRef<HTMLInputElement>(null);
@@ -56,7 +57,7 @@ function UploadButtons({ app, docType, editable }: { app: Application; docType: 
     setBusy(true);
     try {
       await api(`/api/v1/applications/${app.id}/documents/demo?doc_type=${docType}`, { method: "POST" });
-      toast.ok("Демо-документ приложен");
+      toast.ok("Пример документа приложен");
       refresh();
     } catch (e) {
       toast.error(e);
@@ -77,9 +78,11 @@ function UploadButtons({ app, docType, editable }: { app: Application; docType: 
       <button className="btn btn-ghost btn-s" disabled={busy} onClick={() => input.current?.click()}>
         <Paperclip size={15} /> Загрузить файл
       </button>
-      <button className="btn btn-ghost btn-s" disabled={busy} onClick={demo} title="Синтетический документ для проверки сценария">
-        <Sparkles size={15} /> Демо-файл
-      </button>
+      {dict?.demo_mode && (
+        <button className="btn btn-ghost btn-s" disabled={busy} onClick={demo} title="Приложить пример документа, если подходящего файла нет под рукой">
+          <Sparkles size={15} /> Пример файла
+        </button>
+      )}
     </div>
   );
 }

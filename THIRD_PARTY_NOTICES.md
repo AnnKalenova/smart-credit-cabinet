@@ -77,12 +77,13 @@
 | @tanstack/react-query, @tanstack/query-core | 5.104.5 | MIT |
 | lucide-react (иконки) | 1.61.0 | ISC |
 | @fontsource-variable/golos-text — шрифт Golos Text (ParaType) | 5.3.0 | SIL Open Font License 1.1 |
-| @fontsource-variable/unbounded — шрифт Unbounded | 5.3.0 | SIL Open Font License 1.1 |
 | @types/react, csstype | 19.3.0, 3.2.3 | MIT |
 
 Инструменты сборки (`devDependencies`, в итоговый образ не входят): vite 7.3.7, @vitejs/plugin-react 5.2.0, typescript 5.9.3 и их зависимости — 114 пакетов под MIT, ISC, Apache-2.0, BSD-3-Clause, CC-BY-4.0 (данные caniuse-lite).
 
-Фирменный стиль и логотип Альфа-Банка в интерфейсе не используются. Визуальный стиль, знак и иконка приложения сделаны для прототипа.
+## Визуальный стиль
+
+Интерфейс оформлен в духе цифровых продуктов Альфа-Банка: палитра (фирменный красный, графитовый фон, белые карточки), скругления и типографика опираются на открытые дизайн-токены библиотеки [core-components](https://github.com/core-ds/core-components) (MIT, © core-ds). Код библиотеки в решение не входит — стили написаны командой. Логотип и товарные знаки банка не используются: знак кабинета (три ступени «конвейера» на красной плашке) и иконка приложения нарисованы командой.
 
 ## Инструменты разработки (не входят в проверяемую версию)
 
@@ -92,5 +93,6 @@
 | Playwright | Apache-2.0 | UI-прогон сценариев и скриншоты (`e2e/ui_tour.py`) |
 | newman | Apache-2.0 | запуск Postman-коллекции из командной строки |
 | mermaid | MIT | рендер диаграмм для документации (`tools/render_diagrams.py`) |
+| [UI/UX Pro Max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill), [Taste](https://github.com/Leonxlnx/taste-skill) | MIT | чек-листы по интерфейсам (контраст, состояния, мобильная вёрстка), по которым проверялся дизайн |
 | GitHub Actions | сервис GitHub | CI: линтер, тесты, сборка, запуск в Docker |
 | Claude (Anthropic) | коммерческий сервис | ИИ-ассистент при написании кода и документации; в решение не встроен |

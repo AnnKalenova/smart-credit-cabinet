@@ -6,7 +6,7 @@ import { errorText } from "../lib/toast";
 import { Modal } from "./ui";
 
 /** Простая электронная подпись кодом подтверждения внутри кабинета.
- *  SMS и почта не участвуют в сценарии: в демо-режиме код показывается прямо в окне. */
+ *  На демо-стенде сервер возвращает код вместе с запросом, и окно показывает его рядом с полем ввода. */
 export function SignDialog({
   appId,
   purpose,
@@ -63,7 +63,7 @@ export function SignDialog({
           <button className="btn btn-ghost" onClick={onClose}>
             Отмена
           </button>
-          <button className="btn btn-primary" disabled={!challenge || code.length < 6 || busy} onClick={confirm}>
+          <button className="btn btn-signal" disabled={!challenge || code.length < 6 || busy} onClick={confirm}>
             <FileSignature size={18} /> Подписать
           </button>
         </>
@@ -82,14 +82,17 @@ export function SignDialog({
         )}
         {challenge?.demo_code && (
           <div className="demo-code">
-            <span>
-              <KeyRound size={16} style={{ verticalAlign: -3, marginRight: 6 }} />
-              Демо-код: <b>{challenge.demo_code}</b>
-              <br />
-              <span className="faint xs">В рабочей версии подпись подтверждается в интернет-банке, без SMS и почты</span>
+            <span className="row" style={{ gap: 10 }}>
+              <KeyRound size={18} className="faint" />
+              <span>
+                <span className="xs faint" style={{ display: "block" }}>
+                  Ваш код
+                </span>
+                <b>{challenge.demo_code}</b>
+              </span>
             </span>
             <button className="btn btn-ghost btn-s" onClick={() => setCode(challenge.demo_code ?? "")}>
-              Подставить
+              Вставить код
             </button>
           </div>
         )}

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Dashboard } from "../../api/types";
 import { Loader } from "../../components/ui";
+import { useAuth } from "../../lib/auth";
 import { dateTime, moneyShort } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 
@@ -78,6 +79,7 @@ function FaultSimulator() {
 }
 
 export function BankDashboard() {
+  const { dict } = useAuth();
   const d = useQuery({ queryKey: ["dashboard"], queryFn: () => api<Dashboard>("/api/v1/bank/dashboard"), refetchInterval: 5000 });
   if (!d.data) return <Loader />;
   const x = d.data;
@@ -188,7 +190,7 @@ export function BankDashboard() {
               </table>
             )}
           </section>
-          <FaultSimulator />
+          {dict?.demo_mode && <FaultSimulator />}
         </aside>
       </div>
     </>

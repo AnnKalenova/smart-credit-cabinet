@@ -63,7 +63,7 @@ export function BankQueue() {
           </button>
         ))}
       </div>
-      <section className="panel" style={{ padding: 0 }}>
+      <section className="panel panel-table">
         {rows.isLoading && <Loader />}
         {rows.data && rows.data.length === 0 && (
           <Empty title={scope === "queue" ? "Очередь пуста" : "Заявок нет"}>
@@ -100,7 +100,7 @@ export function BankQueue() {
                         {r.company_name}
                         <div className="xs faint">ИНН {r.company_inn}</div>
                         {r.triggers.length > 0 && (
-                          <div className="xs" style={{ color: "#7a5600", marginTop: 2 }}>
+                          <div className="xs trigger" style={{ marginTop: 2 }}>
                             {r.triggers.slice(0, 2).join("; ")}
                             {r.triggers.length > 2 ? ` и ещё ${r.triggers.length - 2}` : ""}
                           </div>

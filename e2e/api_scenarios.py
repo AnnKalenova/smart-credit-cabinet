@@ -124,6 +124,33 @@ def scenario_counter_offer(base: str) -> str:
     return f"встречное предложение ({variants}) → выбран первый вариант, выдан"
 
 
+def scenario_conditions_builder(base: str) -> str:
+    c = Client(base, "kuznetsova")
+    app = prepare(c, "EXPRESS", "EXPANSION", 1_000_000, 12, purpose_details="Ремонт второго зала")
+    app = submit_and_wait(c, app["id"])
+    assert app["decision"]["outcome"] == "COUNTER_OFFER", app["decision"]
+    sim = c.req("POST", f"/api/v1/applications/{app['id']}/simulation", json={})
+    assert sim["result"]["outcome"] == "COUNTER_OFFER", sim["result"]
+    best = next(s for s in sim["suggestions"] if s["result"]["outcome"] == "APPROVE")
+    c.req("POST", f"/api/v1/applications/{app['id']}/offers/decline")
+    new = c.req("POST", f"/api/v1/applications/{app['id']}/reapply", json=best["params"])
+    assert new["parent_id"] == app["id"] and new["term_months"] == best["params"]["term_months"], new
+    ch = c.req("POST", f"/api/v1/applications/{new['id']}/sign-challenges", json={"purpose": "CONSENTS"})
+    c.req(
+        "POST",
+        f"/api/v1/applications/{new['id']}/consents",
+        json={"challenge_id": ch["challenge_id"], "code": ch["demo_code"]},
+    )
+    new = submit_and_wait(c, new["id"])
+    # решение по новой заявке — то, которое показал конструктор
+    assert new["decision"]["outcome"] == "APPROVE", new["decision"]
+    p = best["params"]
+    return (
+        f"конструктор: «{best['title']}» → {best['result']['verdict'].lower()}; "
+        f"новая заявка {money(p['amount'])} ₽ / {p['term_months']} мес. одобрена автоматически"
+    )
+
+
 def scenario_manual_approve(base: str) -> str:
     c = Client(base, "lebedev")
     app = prepare(
@@ -270,6 +297,9 @@ def scenario_accountant(base: str) -> str:
 
 SCENARIOS = [
     ("Автоматическое одобрение", scenario_auto_approve),
+    # конструктор — раньше встречного предложения: тот сценарий выдаёт кредит, и долговая нагрузка
+    # ИП Кузнецовой после него уже не позволит одобрить новую заявку
+    ("Конструктор условий → новая заявка", scenario_conditions_builder),
     ("Встречное предложение", scenario_counter_offer),
     ("Ручное рассмотрение → одобрение", scenario_manual_approve),
     ("Повышенный риск → запрос информации → встречное", scenario_manual_risky),

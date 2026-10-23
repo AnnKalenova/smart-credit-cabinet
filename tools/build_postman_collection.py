@@ -2,7 +2,7 @@
 
 Коллекция проходит те же исходы, что и e2e/api_scenarios.py: каждый запрос проверяет ответ,
 нужные идентификаторы сохраняются в переменные, а ожидание обработки заявки сделано повтором
-запроса через postman.setNextRequest. Запуск: Postman → Run collection или
+запроса через pm.execution.setNextRequest. Запуск: Postman → Run collection или
     npx newman run docs/postman/smart-credit-cabinet.postman_collection.json
 
 Запуск генератора: python tools/build_postman_collection.py
@@ -87,7 +87,7 @@ def poll(name: str, expected: str, token: str = "clientToken") -> dict:
         "if (processing.includes(app.status) && tries < 60) {",
         "  pm.collectionVariables.set('pollTries', tries + 1);",
         "  setTimeout(() => {}, 1500);",
-        "  postman.setNextRequest(pm.info.requestId);",
+        "  pm.execution.setNextRequest(pm.info.requestId);",
         "  return;",
         "}",
         "pm.collectionVariables.set('pollTries', 0);",
@@ -133,7 +133,7 @@ def consents() -> list[dict]:
                 "pm.collectionVariables.set('challengeId', r.challenge_id);",
                 "pm.collectionVariables.set('code', r.demo_code);",
             ],
-            description="В демо-режиме код возвращается в ответе: SMS и почта не используются в сценарии.",
+            description="На демо-стенде код подтверждения возвращается в ответе (поле demo_code).",
         ),
         request(
             "Подписать согласия",
@@ -151,7 +151,7 @@ def submit() -> dict:
 
 def demo_doc(doc_type: str) -> dict:
     return request(
-        f"Приложить демо-документ {doc_type}",
+        f"Приложить пример документа {doc_type}",
         "POST",
         "/api/v1/applications/{{appId}}/documents/demo",
         query=[("doc_type", doc_type)],
@@ -193,7 +193,7 @@ def folder(name: str, description: str, items: list) -> dict:
     flat: list[dict] = []
     for it in items:
         flat.extend(it if isinstance(it, list) else [it])
-    # Стабильные ID: на них ссылается postman.setNextRequest при опросе статуса
+    # Стабильные ID: на них ссылается pm.execution.setNextRequest при опросе статуса
     for i, item in enumerate(flat):
         item["id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{name}/{i}/{item['name']}"))
     return {"name": name, "description": description, "item": flat}
@@ -245,8 +245,9 @@ def build() -> dict:
             ],
         ),
         folder(
-            "2. Встречное предложение — ИП Кузнецова",
-            "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму.",
+            "2. Встречное предложение и конструктор условий — ИП Кузнецова",
+            "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму. "
+            "Конструктор показывает, что на 18 мес. банк одобрит автоматически, — новая заявка на этих условиях одобряется.",
             [
                 login("Кузнецова", "kuznetsova"),
                 create("EXPRESS", "EXPANSION", 1_000_000, 12),
@@ -261,6 +262,55 @@ def build() -> dict:
                         "const app = pm.response.json();",
                         "pm.test('Встречное предложение', () => pm.expect(app.decision.outcome).to.eql('COUNTER_OFFER'));",
                         "pm.test('Два варианта', () => pm.expect(app.offers.length).to.eql(2));",
+                    ],
+                ),
+                request(
+                    "Конструктор условий: текущие условия",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/simulation",
+                    body={},
+                    tests=[
+                        "const s = pm.response.json();",
+                        "pm.test('Тот же исход, что у заявки', () => pm.expect(s.result.outcome).to.eql('COUNTER_OFFER'));",
+                        "pm.test('Нагрузка выше 40%', () => pm.expect(s.result.payment_share).to.be.above(s.result.payment_share_cap));",
+                        "pm.test('Есть подсказки', () => pm.expect(s.suggestions.length).to.be.above(0));",
+                    ],
+                    description="Решение банка при текущих условиях заявки и подсказки, что изменить. Ничего не сохраняет.",
+                ),
+                request(
+                    "Конструктор условий: срок 18 мес.",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/simulation",
+                    body={"term_months": 18, "with_suggestions": False},
+                    tests=[
+                        "const s = pm.response.json();",
+                        "pm.test('Одобрим автоматически', () => pm.expect(s.result.outcome).to.eql('APPROVE'));",
+                    ],
+                ),
+                request("Отказаться от предложения", "POST", "/api/v1/applications/{{appId}}/offers/decline"),
+                request(
+                    "Новая заявка на выбранных условиях",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/reapply",
+                    body={"term_months": 18},
+                    expect=201,
+                    tests=[
+                        "const n = pm.response.json();",
+                        "pm.test('Черновик на 18 мес.', () => { pm.expect(n.status).to.eql('DRAFT'); pm.expect(n.term_months).to.eql(18); });",
+                        "pm.test('Связан с исходной заявкой', () => pm.expect(n.parent_id).to.eql(pm.collectionVariables.get('appId')));",
+                        "pm.collectionVariables.set('appId', n.id);",
+                    ],
+                ),
+                consents(),
+                submit(),
+                poll("Дождаться решения по новой заявке", "OFFER_READY"),
+                request(
+                    "Проверить автоматическое одобрение",
+                    "GET",
+                    "/api/v1/applications/{{appId}}",
+                    tests=[
+                        "const app = pm.response.json();",
+                        "pm.test('Одобрено, как показал конструктор', () => pm.expect(app.decision.outcome).to.eql('APPROVE'));",
                     ],
                 ),
             ],

@@ -1,7 +1,7 @@
 """UI-прогон основного сценария в браузере (Playwright) со скриншотами каждого шага.
 
-Проходит путь предпринимателя от подбора продукта до выдачи и путь аналитика
-по заявке на ручном рассмотрении. Скриншоты сохраняются в docs/screenshots/.
+Проходит путь предпринимателя от подбора продукта до выдачи, конструктор условий
+и путь аналитика по заявке на ручном рассмотрении. Скриншоты сохраняются в docs/screenshots/.
 
     pip install playwright httpx && playwright install chromium
     python e2e/ui_tour.py --base-url http://localhost:8080
@@ -68,7 +68,7 @@ async def client_journey(page: Page, base: str) -> None:
     await shot(page, "04-application-draft")
 
     await page.get_by_role("button", name="Подписать согласия").click()
-    await page.get_by_role("button", name="Подставить").click()
+    await page.get_by_role("button", name="Вставить код").click()
     await shot(page, "05-sign-consents", full=False)
     await page.get_by_role("button", name="Подписать", exact=True).click()
     await page.get_by_role("button", name="Отправить заявку").click()
@@ -85,7 +85,7 @@ async def client_journey(page: Page, base: str) -> None:
     await shot(page, "08-contract", full=False)
     await page.keyboard.press("Escape")
     await page.get_by_role("button", name="Подписать кодом").click()
-    await page.get_by_role("button", name="Подставить").click()
+    await page.get_by_role("button", name="Вставить код").click()
     await page.get_by_role("button", name="Подписать", exact=True).click()
     await page.wait_for_selector("text=Деньги на расчётном счёте", timeout=60_000)
     await shot(page, "09-issued")
@@ -104,6 +104,28 @@ async def counter_offer_view(page: Page, base: str) -> None:
     await page.goto(f"{base}/c/applications/{app['id']}")
     await page.wait_for_selector("text=Выберите вариант")
     await shot(page, "11-counter-offer")
+
+    # конструктор условий: подсказка «Срок 18 мес.» — и банк одобряет автоматически
+    builder = page.locator("section", has=page.get_by_role("heading", name="Конструктор условий"))
+    await builder.locator(".verdict-title").wait_for()
+    await builder.locator(".suggestion", has_text="Срок 18 мес.").get_by_role("button", name="Применить").click()
+    await page.wait_for_function(
+        "() => document.querySelector('.verdict-title')?.textContent === 'Одобрим автоматически'", timeout=15_000
+    )
+    await page.wait_for_timeout(500)
+    # «липкая» шапка не должна перекрывать снимок блока
+    sticky = await page.add_style_tag(content=".topbar { position: static !important; }")
+    await builder.screenshot(path=str(OUT / "19-conditions-builder.png"))
+    await sticky.evaluate("el => el.remove()")
+    print("  📸 19-conditions-builder")
+
+    # та же заявка на телефоне
+    await page.set_viewport_size({"width": 390, "height": 844})
+    await page.evaluate("window.scrollTo(0, 0)")
+    await page.wait_for_timeout(800)
+    await page.screenshot(path=str(OUT / "20-mobile-application.png"))
+    print("  📸 20-mobile-application")
+    await page.set_viewport_size({"width": 1360, "height": 900})
     await logout(page)
 
 

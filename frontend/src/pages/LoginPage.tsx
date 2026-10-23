@@ -4,16 +4,29 @@ import { useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { DemoAccount } from "../api/types";
+import { Brand } from "../components/Layout";
 import { useAuth } from "../lib/auth";
 import { errorText } from "../lib/toast";
 
 const STEPS = [
-  ["Задача", "Расскажите, на что нужны деньги — подберём подходящий кредит"],
-  ["Заявка", "Данные компании уже есть у банка: заполнять почти ничего не нужно"],
-  ["Проверка", "Банк сам запросит сведения в ЕГРЮЛ, ФНС и бюро кредитных историй"],
-  ["Предложение", "Понятные условия и объяснение, почему они такие"],
-  ["Подпись и выдача", "Подпись кодом в кабинете — деньги приходят на расчётный счёт"],
+  ["Задача", "расскажите, на что нужны деньги, — подберём подходящий кредит"],
+  ["Заявка", "данные компании уже есть у банка, заполнять почти ничего не нужно"],
+  ["Проверка", "банк сам запросит сведения в ЕГРЮЛ, ФНС и бюро кредитных историй"],
+  ["Предложение", "понятные условия и объяснение, почему они такие"],
+  ["Подпись и выдача", "подпись кодом в кабинете, деньги — на расчётном счёте"],
 ];
+
+function AccountCard({ a, disabled, onPick }: { a: DemoAccount; disabled: boolean; onPick: (a: DemoAccount) => void }) {
+  return (
+    <button className="account" disabled={disabled} onClick={() => onPick(a)}>
+      <span className="scen">{a.scenario_title ?? a.title}</span>
+      <span className="what">{a.scenario_hint ?? a.scenario}</span>
+      <span className="who">
+        {a.full_name}, {a.login}
+      </span>
+    </button>
+  );
+}
 
 export function LoginPage() {
   const { me, login } = useAuth();
@@ -54,23 +67,19 @@ export function LoginPage() {
     <div className="login">
       <aside className="login-side">
         <div className="brand">
-          <span className="brand-mark" aria-hidden>
-            <span />
-          </span>
-          Умный кредитный кабинет
+          <Brand title="Кредитный кабинет" subtitle="для малого бизнеса" />
         </div>
         <h1>Кредит для бизнеса — от задачи до денег на счёте</h1>
         <p>
-          Прототип цифрового кредитного конвейера для малого и микробизнеса. Предприниматель проходит весь путь в одном кабинете, а
-          банк обрабатывает заявку в том же процессе: автоматически, когда это безопасно, и вместе со специалистом, когда нужна
-          экспертиза.
+          Весь путь — в одном кабинете. Банк рассматривает заявку сразу: автоматически, когда это безопасно, и со специалистом, когда
+          нужна экспертиза.
         </p>
         <div className="login-steps">
           {STEPS.map(([t, d], i) => (
             <div key={t}>
               <b>{i + 1}</b>
               <span>
-                <span style={{ color: "#fff", fontWeight: 600 }}>{t}.</span> {d}
+                <b>{t}:</b> {d}
               </span>
             </div>
           ))}
@@ -79,8 +88,8 @@ export function LoginPage() {
       <section className="login-main">
         <div>
           <h2>Вход</h2>
-          <p className="muted small" style={{ marginTop: 6 }}>
-            В рабочей версии кабинет открывается из интернет-банка для бизнеса без отдельного входа. Здесь — демо-учётки.
+          <p className="muted" style={{ marginTop: 6 }}>
+            Войдите как предприниматель или как сотрудник банка.
           </p>
         </div>
         <form className="stack" onSubmit={onSubmit} style={{ maxWidth: 420 }}>
@@ -101,7 +110,7 @@ export function LoginPage() {
             />
           </div>
           {error && <div className="callout bad">{error}</div>}
-          <button className="btn btn-primary" disabled={busy || !form.login || !form.password}>
+          <button className="btn btn-signal" disabled={busy || !form.login || !form.password}>
             <LogIn size={18} /> Войти
           </button>
         </form>
@@ -109,28 +118,20 @@ export function LoginPage() {
         {demo.data && (
           <div className="stack">
             <div>
-              <h3>Предприниматели</h3>
-              <p className="muted small">У каждой компании свой сценарий рассмотрения. Пароль у всех: demo1234</p>
+              <h3>Войти в один клик</h3>
+              <p className="muted small" style={{ marginTop: 4 }}>
+                У каждой компании свой путь заявки — от одобрения за секунды до решения специалиста. Пароль у всех учётных записей — demo1234.
+              </p>
             </div>
-            <div className="stack-s">
+            <div className="accounts">
               {clients.map((a) => (
-                <button key={a.login} className="account" disabled={busy} onClick={() => doLogin(a.login, a.password)}>
-                  <span className="who">{a.full_name}</span>
-                  <span className="faint xs">{a.login}</span>
-                  <span className="what">{a.title}</span>
-                  <span className="scen">{a.scenario}</span>
-                </button>
+                <AccountCard key={a.login} a={a} disabled={busy} onPick={(x) => doLogin(x.login, x.password)} />
               ))}
             </div>
             <h3 style={{ marginTop: 8 }}>Сотрудники банка</h3>
-            <div className="stack-s">
+            <div className="accounts">
               {staff.map((a) => (
-                <button key={a.login} className="account" disabled={busy} onClick={() => doLogin(a.login, a.password)}>
-                  <span className="who">{a.full_name}</span>
-                  <span className="faint xs">{a.login}</span>
-                  <span className="what">{a.title}</span>
-                  <span className="scen">{a.scenario}</span>
-                </button>
+                <AccountCard key={a.login} a={a} disabled={busy} onPick={(x) => doLogin(x.login, x.password)} />
               ))}
             </div>
           </div>
