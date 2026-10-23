@@ -49,7 +49,9 @@ async def logout(page: Page) -> None:
 async def client_journey(page: Page, base: str) -> None:
     print("Путь предпринимателя (ООО «Северный хлеб»)")
     await page.goto(f"{base}/login")
-    await shot(page, "01-login")
+    await page.locator(".login-sample").wait_for()
+    await page.wait_for_timeout(1200)  # пока путь заявки на панели входа дойдёт до решения
+    await shot(page, "01-login", full=False)  # первый экран: панель входа не прокручивается
     await login(page, base, "Смирнов Алексей Викторович")
     await shot(page, "02-client-home")
 

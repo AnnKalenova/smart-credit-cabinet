@@ -1834,6 +1834,12 @@ hr.rule {
 .login-side {
   background: var(--accent-strong);
   color: #fff;
+}
+/* Содержимое красной панели занимает экран и не уезжает, пока справа листают демо-входы */
+.login-side-in {
+  position: sticky;
+  top: 0;
+  min-height: 100vh;
   padding: 40px 56px 48px;
   display: flex;
   flex-direction: column;
@@ -1861,30 +1867,264 @@ hr.rule {
   margin-top: 24px;
   text-wrap: balance;
 }
-.login-side p {
+.login-side-in > p {
   color: #fff;
   max-width: 46ch;
   font-size: var(--fs-l);
   line-height: 1.5;
 }
-.login-steps {
-  display: flex;
-  flex-direction: column;
-  margin-top: auto;
-  max-width: 460px;
-}
-.login-steps div {
+
+/* Путь заявки и решение на шаге «Предложение»: станции — как в «конвейере» заявки, только белым по красному */
+.login-show {
+  margin: auto 0 0;
   display: grid;
-  grid-template-columns: 32px 1fr;
-  gap: 12px;
-  padding: 12px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.28);
-  font-size: var(--fs-s);
-  line-height: 1.45;
+  grid-template-columns: max-content minmax(0, 420px);
+  gap: 24px;
 }
-.login-steps b {
+.login-route {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-rows: repeat(5, 1fr);
+}
+.login-route li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+.login-route .node {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  background: var(--accent-strong);
+  color: var(--accent-strong);
+  display: grid;
+  place-items: center;
+}
+/* отрезок от станции к следующей: строки равной высоты, поэтому он длиной в строку */
+.login-route li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 2px;
+  height: 100%;
+  background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.6) 0 6px, transparent 6px 11px);
+}
+.login-route li.done::after {
+  background: #fff;
+}
+.login-route li.done .node,
+.login-route li.current .node {
+  background: #fff;
+  border-color: #fff;
+}
+.login-route li.current {
+  font-weight: 700;
+}
+.login-route li.current .node {
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.28);
+}
+.login-route li.current .node::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+}
+.login-sample {
+  position: relative;
+  background: var(--card);
+  color: var(--ink);
+  border-radius: var(--radius-xl);
+  padding: 22px 24px 20px;
+  box-shadow:
+    0 28px 56px rgba(84, 9, 0, 0.32),
+    0 2px 8px rgba(84, 9, 0, 0.18);
+}
+/* хвостик указывает на «Предложение» — четвёртую из пяти строк пути, её середина на 70% высоты */
+.login-sample::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: calc(70% - 7px);
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--card);
+  transform: rotate(45deg);
+}
+.login-sample-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 10px;
+  border-radius: 999px;
+  background: var(--positive-soft);
+  color: var(--positive);
+  font-size: var(--fs-s);
+  font-weight: 600;
+}
+.login-sample-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--positive-graphic);
+}
+.login-sample-amount {
+  margin-top: 14px;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.login-sample-amount small {
+  margin-left: 4px;
+  white-space: nowrap;
+  font-size: var(--fs-m);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.login-sample-what {
+  margin-top: 4px;
+  font-size: var(--fs-s);
+  color: var(--muted);
+}
+.login-sample-terms {
+  margin: 16px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.login-sample-terms dt {
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+.login-sample-terms dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-l);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+.login-sample-why {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  font-size: var(--fs-s);
+}
+.login-sample-why span {
+  font-size: var(--fs-xs);
+  color: var(--faint);
+}
+.login-sample-why p {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.login-sample-why svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--positive);
+}
+/* Один раз при открытии: заявка проходит этапы, и появляется решение */
+.login-route li.done .node,
+.login-route li.current .node {
+  animation: login-route-node 0.22s ease-out backwards;
+  animation-delay: calc(0.2s + var(--i) * 0.22s);
+}
+.login-route li.done .node svg {
+  animation: login-route-check 0.22s ease-out backwards;
+  animation-delay: calc(0.2s + var(--i) * 0.22s);
+}
+.login-route li.done::after {
+  transform-origin: top;
+  animation: login-route-rail 0.22s linear backwards;
+  animation-delay: calc(0.3s + var(--i) * 0.22s);
+}
+.login-sample {
+  animation: login-sample-in 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+  animation-delay: 0.95s;
+}
+@keyframes login-route-node {
+  from {
+    background: var(--accent-strong);
+    border-color: rgba(255, 255, 255, 0.75);
+    box-shadow: none;
+  }
+}
+@keyframes login-route-check {
+  from {
+    transform: scale(0);
+  }
+}
+@keyframes login-route-rail {
+  from {
+    transform: scaleY(0);
+  }
+}
+@keyframes login-sample-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+/* большой экран: заголовок крупнее */
+@media (min-width: 1600px) and (min-height: 860px) {
+  .login-side h1 {
+    font-size: 52px;
+  }
+  .login-side-in > p {
+    font-size: 20px;
+  }
+}
+/* ноутбук поуже: поля панели меньше, чтобы путь и карточка поместились рядом */
+@media (max-width: 1365px) {
+  .login-side-in {
+    padding-inline: 40px;
+  }
+}
+/* узкая панель: только карточка решения */
+@media (max-width: 1180px) {
+  .login-show {
+    grid-template-columns: minmax(0, 420px);
+  }
+  .login-route,
+  .login-sample::before {
+    display: none;
+  }
+  .login-sample {
+    animation-delay: 0.15s;
+  }
+}
+/* невысокое окно: плотнее по вертикали и без пояснения к решению, чтобы панель поместилась в экран */
+@media (max-height: 760px) and (min-width: 761px) {
+  .login-side-in {
+    gap: 20px;
+  }
+  .login-side h1 {
+    margin-top: 8px;
+  }
+  .login-sample-why {
+    display: none;
+  }
+}
+/* совсем низкое окно: панель прокручивается вместе со страницей */
+@media (max-height: 600px) {
+  .login-side-in {
+    position: static;
+  }
 }
 .login-main {
   padding: 48px 56px;
@@ -2106,7 +2346,7 @@ hr.rule {
   .purpose-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .login-side,
+  .login-side-in,
   .login-main {
     padding: 36px 32px;
   }
@@ -2115,18 +2355,22 @@ hr.rule {
   .login {
     grid-template-columns: 1fr;
   }
-  .login-side,
+  .login-side-in,
   .login-main {
     padding: 24px 16px 28px;
+  }
+  .login-side-in {
+    position: static;
+    min-height: 0;
   }
   .login-side h1 {
     font-size: 32px;
     margin-top: 8px;
   }
-  .login-side p {
+  .login-side-in > p {
     font-size: var(--fs-m);
   }
-  .login-steps {
+  .login-show {
     display: none;
   }
   .accounts {

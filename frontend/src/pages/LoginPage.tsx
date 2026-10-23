@@ -1,26 +1,78 @@
 import { useQuery } from "@tanstack/react-query";
-import { LogIn } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { Check, CirclePlus, LogIn } from "lucide-react";
+import { useState, type CSSProperties, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { DemoAccount } from "../api/types";
 import { Brand } from "../components/Layout";
 import { useAuth } from "../lib/auth";
+import { money, pct } from "../lib/format";
 import { errorText } from "../lib/toast";
 
-const STEPS = [
-  ["Задача", "расскажите, на что нужны деньги, — подберём подходящий кредит"],
-  ["Заявка", "данные компании уже есть у банка, заполнять почти ничего не нужно"],
-  ["Проверка", "банк сам запросит сведения в ЕГРЮЛ, ФНС и бюро кредитных историй"],
-  ["Предложение", "понятные условия и объяснение, почему они такие"],
-  ["Подпись и выдача", "подпись кодом в кабинете, деньги — на расчётном счёте"],
-];
+const ROUTE = ["Задача", "Заявка", "Проверка", "Предложение", "Подпись и выдача"];
+const OFFER_STEP = 3;
+
+/** Путь заявки и решение, которое клиент видит на шаге «Предложение». Цифры — из демо-сценария
+ *  «Автоматическое одобрение» (ООО «Северный хлеб», вход «smirnov») при ставках по умолчанию. */
+function Showcase() {
+  return (
+    <figure className="login-show">
+      <ol className="login-route" aria-label="Путь заявки">
+        {ROUTE.map((title, i) => (
+          <li
+            key={title}
+            className={i < OFFER_STEP ? "done" : i === OFFER_STEP ? "current" : undefined}
+            aria-current={i === OFFER_STEP ? "step" : undefined}
+            style={{ "--i": i } as CSSProperties}
+          >
+            <span className="node" aria-hidden>
+              {i < OFFER_STEP && <Check size={14} strokeWidth={3} />}
+            </span>
+            {title}
+          </li>
+        ))}
+      </ol>
+      <div className="login-sample">
+        <span className="login-sample-status">Одобрено автоматически</span>
+        <p className="login-sample-amount">
+          {money(3_000_000)} <small>на 12 мес.</small>
+        </p>
+        <p className="login-sample-what">
+          Оборотный кредит, <span className="nowrap">ООО «Северный хлеб»</span>
+        </p>
+        <dl className="login-sample-terms">
+          <div>
+            <dt>Ставка</dt>
+            <dd>{pct(18.5)}</dd>
+          </div>
+          <div>
+            <dt>Платёж в месяц</dt>
+            <dd>{money(275_754)}</dd>
+          </div>
+        </dl>
+        <div className="login-sample-why">
+          <span>Помогло решению</span>
+          <p>
+            <CirclePlus size={16} aria-hidden /> Кредиты погашались без просрочек
+          </p>
+          <p>
+            <CirclePlus size={16} aria-hidden /> Бизнес работает больше 5 лет
+          </p>
+        </div>
+      </div>
+      <figcaption className="sr-only">Пример решения банка по демо-заявке</figcaption>
+    </figure>
+  );
+}
+
+/** «25 млн ₽», «60 мес.» не разрываются переносом строки */
+const keepUnits = (s: string) => s.replace(/(\d) (?=мес\.|млн|тыс\.)/g, "$1 ").replace(/(млн|тыс\.) ₽/g, "$1 ₽");
 
 function AccountCard({ a, disabled, onPick }: { a: DemoAccount; disabled: boolean; onPick: (a: DemoAccount) => void }) {
   return (
     <button className="account" disabled={disabled} onClick={() => onPick(a)}>
       <span className="scen">{a.scenario_title ?? a.title}</span>
-      <span className="what">{a.scenario_hint ?? a.scenario}</span>
+      <span className="what">{keepUnits(a.scenario_hint ?? a.scenario)}</span>
       <span className="who">
         {a.full_name}, {a.login}
       </span>
@@ -66,23 +118,16 @@ export function LoginPage() {
   return (
     <div className="login">
       <aside className="login-side">
-        <div className="brand">
-          <Brand title="Кредитный кабинет" subtitle="для малого бизнеса" />
-        </div>
-        <h1>Кредит для бизнеса — от задачи до денег на счёте</h1>
-        <p>
-          Весь путь — в одном кабинете. Банк рассматривает заявку сразу: автоматически, когда это безопасно, и со специалистом, когда
-          нужна экспертиза.
-        </p>
-        <div className="login-steps">
-          {STEPS.map(([t, d], i) => (
-            <div key={t}>
-              <b>{i + 1}</b>
-              <span>
-                <b>{t}:</b> {d}
-              </span>
-            </div>
-          ))}
+        <div className="login-side-in">
+          <div className="brand">
+            <Brand title="Кредитный кабинет" subtitle="для малого бизнеса" />
+          </div>
+          <h1>Кредит для бизнеса — от задачи до денег на счёте</h1>
+          <p>
+            Весь путь — в одном кабинете. Банк рассматривает заявку сразу: автоматически, когда это безопасно, и со специалистом, когда
+            нужна экспертиза.
+          </p>
+          <Showcase />
         </div>
       </aside>
       <section className="login-main">
