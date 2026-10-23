@@ -7,7 +7,8 @@
   • АБС банка (открытие ссудного счёта и выдача).
 Данные синтетические и берутся из data/synthetic/companies.json.
 
-Для демонстрации отказоустойчивости любой сервис можно «уронить» или «замедлить»:
+Для демонстрации отказоустойчивости любой сервис можно «уронить», «замедлить» или заставить отвечать
+пустым ответом (HTTP 200 и {}):
 POST /_control/faults {"service": "BKI", "mode": "down", "duration_seconds": 120}
 """
 
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 DATA_PATH = Path(
@@ -58,6 +60,15 @@ def rel_date(spec: dict | None) -> str | None:
     return date(year, month, day).isoformat()
 
 
+class EmptyAnswer(Exception):
+    """Смоделированный сбой: сервис отвечает HTTP 200, но без данных."""
+
+
+@app.exception_handler(EmptyAnswer)
+async def empty_answer(request: Request, exc: EmptyAnswer) -> JSONResponse:  # noqa: ARG001
+    return JSONResponse({}, status_code=200)
+
+
 async def simulate(service: str) -> None:
     fault = FAULTS.get(service)
     if fault and fault["until"] < time.time():
@@ -68,6 +79,8 @@ async def simulate(service: str) -> None:
     if fault and fault["mode"] == "slow":
         await asyncio.sleep(SLOW_SECONDS)
     await asyncio.sleep(random.uniform(LATENCY_MIN_MS, LATENCY_MAX_MS) / 1000)
+    if fault and fault["mode"] == "empty":
+        raise EmptyAnswer
 
 
 def company_or_404(inn: str) -> dict:
@@ -215,7 +228,7 @@ async def abs_disburse(body: DisburseRequest):
 
 class FaultIn(BaseModel):
     service: Literal["EGRUL", "FNS", "BKI", "ABS"]
-    mode: Literal["ok", "down", "slow"]
+    mode: Literal["ok", "down", "slow", "empty"]
     duration_seconds: int = Field(default=120, ge=10, le=3600)
 
 

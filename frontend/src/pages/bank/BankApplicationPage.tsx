@@ -19,7 +19,7 @@ const OPERATION_LABEL: Record<string, string> = {
   credit_report: "Кредитный отчёт по согласию",
   open_loan_and_disburse: "Открытие ссудного счёта и выдача",
 };
-const CALL_STATUS_LABEL: Record<string, string> = { SUCCESS: "Успешно", ERROR: "Ошибка", TIMEOUT: "Нет ответа" };
+const CALL_STATUS_LABEL: Record<string, string> = { SUCCESS: "Успешно", ERROR: "Ошибка", TIMEOUT: "Нет ответа", INVALID: "Неполный ответ" };
 // причины, после которых имеет смысл повторить автоматическую проверку: внешний источник был недоступен
 // или прислал неполный ответ, либо этап конвейера не выполнился из-за технического сбоя
 const RERUN_REASONS = ["integration_unavailable", "technical_failure"];

@@ -3842,7 +3842,8 @@
             "enum": [
               "ok",
               "down",
-              "slow"
+              "slow",
+              "empty"
             ],
             "title": "Mode"
           },

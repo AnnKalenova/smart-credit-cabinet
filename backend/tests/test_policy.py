@@ -110,6 +110,15 @@ def test_stop_factors_decline(overrides, code):
     assert all(r.client_text for r in result.reasons)
 
 
+@pytest.mark.parametrize("egrul", [{}, {"status": ""}, {"status": None, "director": {"since": "2018-01-01"}}])
+def test_missing_registry_status_is_not_treated_as_active(egrul):
+    # без статуса в выписке нельзя считать, что бизнес действует: решение принимает специалист
+    result = evaluate(_input(egrul=egrul))
+    assert result.outcome == DecisionOutcome.MANUAL_REVIEW
+    reason = next(r for r in result.reasons if r.code == "registry_status_unknown")
+    assert reason.kind == "MANUAL" and reason.text.startswith("В выписке ЕГРЮЛ нет статуса компании")
+
+
 # --------------------------------------------------------------------------- запрос информации
 
 

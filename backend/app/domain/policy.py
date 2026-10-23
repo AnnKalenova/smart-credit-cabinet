@@ -289,8 +289,9 @@ REGISTRY_STATUS_TEXT = {
 
 def stop_factors(inp: PolicyInput) -> list[Reason]:
     reasons: list[Reason] = []
-    status = inp.egrul.get("status", "ACTIVE")
-    if status != "ACTIVE":
+    status = inp.egrul.get("status")
+    # статуса нет — это не «действующая»: такую заявку проверяет специалист (см. manual_triggers)
+    if status and status != "ACTIVE":
         status_text = inp.egrul.get("status_text", status)
         is_ip = inp.company_kind == "IP"
         registry = "ЕГРИП" if is_ip else "ЕГРЮЛ"
@@ -364,6 +365,16 @@ def info_checks(inp: PolicyInput) -> list[dict]:
 
 def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info: bool) -> list[Reason]:
     reasons: list[Reason] = []
+    if not inp.egrul.get("status"):
+        registry = "ЕГРИП" if inp.company_kind == "IP" else "ЕГРЮЛ"
+        reasons.append(
+            Reason(
+                "registry_status_unknown",
+                "MANUAL",
+                f"В выписке {registry} нет статуса компании — проверьте, что бизнес действует",
+                "Специалист проверит сведения о компании в реестре",
+            )
+        )
     if inp.prior_manual_decline:
         # решение специалиста не обходится новой заявкой с другими условиями
         reasons.append(

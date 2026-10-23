@@ -321,6 +321,28 @@ def scenario_accountant(base: str) -> str:
     return "бухгалтеру отправка запрещена (403), руководитель получил уведомление «Нужна ваша подпись»"
 
 
+def scenario_empty_source_answer(base: str) -> str:
+    analyst = Client(base, "analyst")
+    faults = "/api/v1/bank/integrations/faults"
+    analyst.req("POST", faults, json={"service": "EGRUL", "mode": "empty", "duration_seconds": 120})
+    try:
+        c = Client(base, "morozov")
+        app = submit_and_wait(c, prepare(c, "EXPRESS", "OTHER", 300_000, 6)["id"])
+    finally:
+        analyst.req("POST", faults, json={"service": "EGRUL", "mode": "ok"})
+    # пустая выписка — не «компания действует»: автоматического одобрения нет, заявку смотрит специалист
+    assert app["status"] == "MANUAL_REVIEW", app["status"]
+    dossier = analyst.req("GET", f"/api/v1/bank/applications/{app['id']}")
+    reason = dossier["decisions"][0]["reasons"][0]["text"]
+    assert reason.startswith("ЕГРЮЛ/ЕГРИП — пустой ответ"), reason
+    calls = [x for x in dossier["integration_calls"] if x["service"] == "EGRUL"]
+    assert calls and all(x["status"] == "INVALID" for x in calls), calls
+    analyst.req("POST", f"/api/v1/bank/applications/{app['id']}/rerun")
+    final = c.wait(app["id"])
+    status = final["status_view"]["title"]
+    return f"ЕГРЮЛ вернул {{}} (попыток: {len(calls)}) → заявка у специалиста; после повтора проверки — «{status}»"
+
+
 SCENARIOS = [
     ("Автоматическое одобрение", scenario_auto_approve),
     # конструктор — раньше встречного предложения: тот сценарий выдаёт кредит, и долговая нагрузка
@@ -332,6 +354,7 @@ SCENARIOS = [
     ("Автоматический отказ", scenario_auto_decline),
     ("Запрос уточнений → одобрение", scenario_needs_info),
     ("Права подписи (бухгалтер/директор)", scenario_accountant),
+    ("Пустой ответ ЕГРЮЛ → специалист", scenario_empty_source_answer),
 ]
 
 

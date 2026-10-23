@@ -1,7 +1,8 @@
 """Адаптер к внешним системам: ЕГРЮЛ/ЕГРИП, ФНС «Прозрачный бизнес», БКИ, АБС.
 
 В поставке они заменены симулятором `integrations-mock` с упрощёнными контрактами.
-Адаптер изолирует конвейер от транспорта: таймауты, журнал вызовов, корреляционный ID.
+Адаптер изолирует конвейер от транспорта: таймауты, журнал вызовов, корреляционный ID, проверка
+обязательных данных в ответе (см. contracts.py).
 Повторные попытки с экспоненциальной задержкой делает воркер (см. worker/runner.py).
 """
 
@@ -15,17 +16,19 @@ import httpx
 
 from app.config import get_settings
 from app.db import SessionLocal
+from app.integrations.contracts import contract_problem
 from app.models import IntegrationCall
 
 log = logging.getLogger("integrations")
 
 
 class IntegrationError(Exception):
-    def __init__(self, service: str, message: str, retryable: bool = True):
+    def __init__(self, service: str, message: str, retryable: bool = True, invalid: bool = False):
         super().__init__(f"{service}: {message}")
         self.service = service
         self.reason = message  # без кода сервиса — для текстов специалисту
         self.retryable = retryable
+        self.invalid = invalid  # сервис ответил, но без обязательных данных
 
 
 SERVICE_TITLES = {
@@ -84,7 +87,9 @@ class ExternalSystems:
             )
             db.commit()
 
-    def _call(self, service: str, operation: str, method: str, url: str, **kwargs) -> dict:
+    def _call(
+        self, service: str, operation: str, method: str, url: str, expected: dict | None = None, **kwargs
+    ) -> dict:
         started = time.perf_counter()
         try:
             resp = self._client.request(method, url, **kwargs)
@@ -100,16 +105,27 @@ class ExternalSystems:
         if resp.status_code >= 400:
             self._log(service, operation, "ERROR", resp.status_code, started, resp.text[:300])
             raise IntegrationError(service, f"запрос отклонён (HTTP {resp.status_code})", retryable=False)
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        # ответ без обязательных полей — сбой источника, а не «нарушений не найдено»: этап повторится
+        problem = contract_problem(service, data, expected)
+        if problem:
+            self._log(service, operation, "INVALID", resp.status_code, started, problem)
+            raise IntegrationError(service, problem, invalid=True)
         self._log(service, operation, "SUCCESS", resp.status_code, started, None)
-        return resp.json()
+        return data
 
     # ---- контракты (упрощённые, с сохранением смысла интеграции)
 
     def egrul(self, inn: str) -> dict:
-        return self._call("EGRUL", "get_extract", "GET", f"/egrul/v1/entities/{inn}")
+        return self._call("EGRUL", "get_extract", "GET", f"/egrul/v1/entities/{inn}", expected={"inn": inn})
 
     def fns(self, inn: str) -> dict:
-        return self._call("FNS", "transparent_business", "GET", f"/fns/v1/transparent-business/{inn}")
+        return self._call(
+            "FNS", "transparent_business", "GET", f"/fns/v1/transparent-business/{inn}", expected={"inn": inn}
+        )
 
     def bki(self, inn: str, consent_id: str) -> dict:
         return self._call(
@@ -117,11 +133,19 @@ class ExternalSystems:
             "credit_report",
             "POST",
             "/bki/v1/credit-reports",
+            expected={"inn": inn},
             json={"inn": inn, "consent_id": consent_id, "purpose": "loan_application"},
         )
 
     def abs_disburse(self, payload: dict) -> dict:
-        return self._call("ABS", "open_loan_and_disburse", "POST", "/abs/v1/loans", json=payload)
+        return self._call(
+            "ABS",
+            "open_loan_and_disburse",
+            "POST",
+            "/abs/v1/loans",
+            expected={"amount": payload["amount"]},
+            json=payload,
+        )
 
     def control_faults(self, payload: dict | None = None) -> dict:
         if payload is None:

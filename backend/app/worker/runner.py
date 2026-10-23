@@ -111,8 +111,9 @@ def _on_error(db: Session, job_id: int, error: Exception) -> None:
         if isinstance(error, IntegrationError) and app.status == job.stage:
             # подсказка клиенту — только пока заявка на этом этапе (её могли уже отозвать)
             title = SERVICE_TITLES.get(error.service, error.service)
+            what = "отвечает без нужных сведений" if error.invalid else "временно не отвечает"
             app.stage_detail = (
-                f"{title} временно не отвечает — повторим запрос через {delay:.0f} с "
+                f"{title} {what} — повторим запрос через {delay:.0f} с "
                 f"(попытка {job.attempts + 1} из {job.max_attempts})"
             )
         log.warning(

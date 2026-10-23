@@ -191,6 +191,13 @@ def on_enrichment_failed(db: Session, app: Application, error: Exception) -> Non
     service = getattr(error, "service", "")
     source = SERVICE_FROM.get(service, "из внешнего источника")
     reason = getattr(error, "reason", str(error))
+    invalid = getattr(error, "invalid", False)
+    # неполный ответ — не «нарушений нет»: без выписки, отчёта или кредитной истории решение не принимается
+    text = (
+        f"{SERVICE_TITLES.get(service, 'Внешний источник')} — {reason}"
+        if invalid
+        else f"Не удалось получить данные {source}: {reason}"
+    )
     decision = Decision(
         application_id=app.id,
         kind=DecisionKind.AUTO,
@@ -199,11 +206,13 @@ def on_enrichment_failed(db: Session, app: Application, error: Exception) -> Non
             {
                 "code": "integration_unavailable",
                 "kind": "MANUAL",
-                "text": f"Не удалось получить данные {source}: {reason}",
-                "client_text": "Один из внешних источников данных временно недоступен — заявку проверит специалист",
+                "text": text,
+                "client_text": "Внешний источник прислал неполные сведения — заявку проверит специалист"
+                if invalid
+                else "Один из внешних источников данных временно недоступен — заявку проверит специалист",
             }
         ],
-        details={"error": str(error), "service": service},
+        details={"error": str(error), "service": service, "invalid_response": invalid},
         policy_version=POLICY_VERSION,
     )
     db.add(decision)
@@ -212,7 +221,9 @@ def on_enrichment_failed(db: Session, app: Application, error: Exception) -> Non
         db,
         app,
         AppStatus.MANUAL_REVIEW,
-        title="Передали заявку специалисту: внешний источник данных недоступен",
+        title="Передали заявку специалисту: внешний источник прислал неполные сведения"
+        if invalid
+        else "Передали заявку специалисту: внешний источник данных недоступен",
         payload={"service": service},
     )
 
@@ -430,13 +441,17 @@ def on_disbursement_failed(db: Session, app: Application, error: Exception) -> N
     if app.status != AppStatus.DISBURSEMENT:
         return
     service = getattr(error, "service", "")
-    title = SERVICE_TITLES.get(service, "учётная система банка")
+    if isinstance(error, IntegrationError):
+        title = lower_first(SERVICE_TITLES.get(service, "учётная система банка"))
+        what = f"{title} {'отвечала без нужных данных' if error.invalid else 'не ответила'} после всех попыток"
+    else:
+        what = f"техническая ошибка после всех попыток ({str(error)[:200]})"
     app.stage_detail = "Выдача задерживается — специалист банка повторит её"
     add_event(
         db,
         app,
         "DISBURSEMENT_FAILED",
-        f"Выдача не прошла: {lower_first(title)} не ответила после всех попыток. Нужен повтор выдачи",
+        f"Выдача не прошла: {what}. Нужен повтор выдачи",
         payload={"error": str(error)[:300], "service": service},
         client_visible=False,
     )

@@ -279,7 +279,7 @@ class IntegrationCall(TimestampMixin, Base):
     application_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("applications.id"))
     service: Mapped[str] = mapped_column(String(32), nullable=False)
     operation: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)  # SUCCESS / ERROR / TIMEOUT
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # SUCCESS / ERROR / TIMEOUT / INVALID
     http_status: Mapped[int | None] = mapped_column(Integer)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)

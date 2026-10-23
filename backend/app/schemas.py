@@ -506,5 +506,6 @@ class SettingIn(InModel):
 
 class FaultIn(InModel):
     service: Literal["EGRUL", "FNS", "BKI", "ABS"]
-    mode: Literal["ok", "down", "slow"]
+    # empty — сервис отвечает HTTP 200 без данных: проверка, что неполный ответ не принимается за благополучный
+    mode: Literal["ok", "down", "slow", "empty"]
     duration_seconds: int = Field(default=120, ge=10, le=3600)

@@ -14,6 +14,8 @@ const SERVICES = [
   { code: "ABS", label: "АБС банка (выдача)", short: "АБС" },
 ];
 
+const FAULT_STATE: Record<string, string> = { down: "недоступен", slow: "медленный", empty: "отвечает без данных" };
+
 function duration(minutes: number | null): string {
   if (minutes === null) return "—";
   if (minutes < 1) return `${Math.max(1, Math.round(minutes * 60))} с`;
@@ -40,7 +42,7 @@ function FaultSimulator() {
       <h3>Проверка отказоустойчивости</h3>
       <p className="small muted" style={{ marginTop: 6 }}>
         Смоделируйте сбой внешней системы на 2 минуты и подайте заявку: конвейер повторит запрос с нарастающей паузой, а если сервис не
-        вернётся — передаст заявку специалисту, а не «уронит» её.
+        вернётся или так и не пришлёт полные данные — передаст заявку специалисту, а не «уронит» её.
       </p>
       <div className="stack-s" style={{ marginTop: 12 }}>
         {SERVICES.map((s) => {
@@ -51,10 +53,10 @@ function FaultSimulator() {
                 <b>{s.label}</b>
                 <span className="spacer" />
                 <span className={f ? "neg xs" : "faint xs"}>
-                  {f ? (f.mode === "down" ? `недоступен ещё ${f.seconds_left} с` : `медленный ещё ${f.seconds_left} с`) : "работает штатно"}
+                  {f ? `${FAULT_STATE[f.mode] ?? f.mode} ещё ${f.seconds_left} с` : "работает штатно"}
                 </span>
               </div>
-              <div className="row" style={{ gap: 6, marginTop: 6 }}>
+              <div className="row-wrap" style={{ gap: 6, marginTop: 6 }}>
                 {f ? (
                   <button className="btn btn-primary btn-s" onClick={() => set.mutate({ service: s.code, mode: "ok" })}>
                     Восстановить
@@ -66,6 +68,9 @@ function FaultSimulator() {
                     </button>
                     <button className="btn btn-ghost btn-s" onClick={() => set.mutate({ service: s.code, mode: "slow" })}>
                       Замедлить
+                    </button>
+                    <button className="btn btn-ghost btn-s" onClick={() => set.mutate({ service: s.code, mode: "empty" })}>
+                      Пустой ответ
                     </button>
                   </>
                 )}
