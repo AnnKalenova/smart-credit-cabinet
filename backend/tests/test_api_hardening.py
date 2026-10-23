@@ -591,3 +591,19 @@ def test_worker_survives_application_change_during_external_call(login, monkeypa
     assert all(j.status in (JobStatus.DONE, JobStatus.FAILED) for j in jobs)
     # у отозванной заявки не появляется «БКИ временно не отвечает»
     assert c.get(app["id"])["stage_detail"] is None
+
+
+def test_bank_sees_that_client_waits_for_reply(login):
+    c, a = login("smirnov"), login("analyst")
+    app = c.prepare_and_submit("EXPRESS", "OTHER", 300_000, 6)
+
+    def row() -> dict:
+        rows = a.call("GET", "/api/v1/bank/applications", params={"scope": "all", "q": app["number"]})
+        return rows[0]
+
+    assert row()["awaiting_reply"] is False
+    c.call("POST", _url(app, "/messages"), json={"text": "Можно ли досрочно погасить без комиссии?"})
+    assert row()["awaiting_reply"] is True
+    assert a.call("GET", _bank(app))["awaiting_reply"] is True
+    a.call("POST", _bank(app, "/messages"), json={"text": "Да, в любой день"})
+    assert row()["awaiting_reply"] is False

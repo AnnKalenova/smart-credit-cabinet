@@ -763,6 +763,7 @@ export function BankApplicationPage() {
             {TABS.map((t) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
                 {t}
+                {t === "Документы и переписка" && app.awaiting_reply && <span className="tab-dot" role="img" aria-label="клиент ждёт ответа" />}
               </button>
             ))}
           </div>

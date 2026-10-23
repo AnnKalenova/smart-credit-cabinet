@@ -22,6 +22,7 @@ from app.domain.enums import DecisionOutcome
 from app.domain.finance import annuity_principal, floor_to, monthly_rate, offer_economics
 from app.domain.products import NICE_TERMS, pledged, required_documents
 from app.domain.scoring import ScoringOutcome, director_changed_recently
+from app.domain.text import fmt_money
 
 POLICY_VERSION = "credit-policy-1.1"
 DTI_CAP = 0.40  # все платежи по кредитам — не более 40% месячных поступлений
@@ -29,7 +30,7 @@ GRADE_LIMIT_FACTOR = {"A": 1.0, "B": 0.9, "C": 0.75, "D": 0.6, "E": 0.0}
 GRADE_PREMIUM = {"A": 0.0, "B": 1.0, "C": 2.5, "D": 4.0, "E": 6.0}
 REVENUE_MISMATCH_RATIO = 1.6  # заявленная выручка больше годовых поступлений на счёт в 1,6 раза
 STATEMENT_HAIRCUT = 0.8  # подтверждённая выпиской выручка учитывается с дисконтом 20%
-# ...и не больше чем вдвое выше поступлений на счёт в банке: выписку из другого банка прототип не разбирает
+# ...и не больше чем вдвое выше поступлений на счёт в банке: выписку из другого банка автоматически не разбираем
 CONFIRMED_REVENUE_CAP = 2.0
 TAX_ARREARS_MANUAL = 300_000
 
@@ -263,7 +264,7 @@ def _offer(
 
 def _rub(v: float) -> str:
     """12345678 → «12 345 678 ₽» (неразрывные пробелы между разрядами)."""
-    return f"{v:,.0f}".replace(",", "\u00a0") + "\u00a0₽"
+    return fmt_money(v)
 
 
 # --------------------------------------------------------------------------- правила
@@ -368,8 +369,8 @@ def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info:
                 Reason(
                     "above_auto_limit",
                     "MANUAL",
-                    f"Сумма {o.amount:,.0f} ₽ выше лимита автоматического решения "
-                    f"по продукту «{p.name}» ({p.auto_decision_limit:,.0f} ₽)".replace(",", " "),
+                    f"Сумма {_rub(o.amount)} выше лимита автоматического решения "
+                    f"по продукту «{p.name}» ({_rub(p.auto_decision_limit)})",
                     "Для такой суммы решение принимает кредитный специалист",
                 )
             )
@@ -408,7 +409,7 @@ def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info:
             Reason(
                 "tax_arrears",
                 "MANUAL",
-                f"Задолженность по налогам {arrears:,.0f} ₽".replace(",", " "),
+                f"Задолженность по налогам {_rub(arrears)}",
                 "",
             )
         )
@@ -510,9 +511,7 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
             Reason(
                 "limit_exceeded",
                 "LIMIT",
-                f"Запрошено {inp.amount:,.0f} ₽, максимальный лимит на срок {inp.term_months} мес. — {limit:,.0f} ₽".replace(
-                    ",", " "
-                ),
+                f"Запрошено {_rub(inp.amount)}, максимальный лимит на срок {inp.term_months} мес. — {_rub(limit)}",
                 "Запрошенная сумма выше, чем позволяют обороты и текущая долговая нагрузка: "
                 "платежи по всем кредитам не должны превышать 40% поступлений на счёт",
             )

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { MessageSquareText, Search } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
@@ -99,6 +99,11 @@ export function BankQueue() {
                       <td>
                         {r.company_name}
                         <div className="xs faint">ИНН {r.company_inn}</div>
+                        {r.awaiting_reply && (
+                          <div className="xs row" style={{ gap: 4, marginTop: 2, color: "var(--info)" }}>
+                            <MessageSquareText size={13} /> Клиент ждёт ответа на сообщение
+                          </div>
+                        )}
                         {r.triggers.length > 0 && (
                           <div className="xs trigger" style={{ marginTop: 2 }}>
                             {r.triggers.slice(0, 2).join("; ")}

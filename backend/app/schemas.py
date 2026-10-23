@@ -427,6 +427,9 @@ class BankApplicationRow(BaseModel):
     review_due_at: datetime | None
     sla_overdue: bool
     triggers: list[str]
+    awaiting_reply: bool = Field(
+        default=False, description="Последнее сообщение по заявке — от клиента, он ждёт ответа"
+    )
 
 
 class BankOfferIn(InModel):

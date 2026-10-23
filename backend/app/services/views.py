@@ -20,6 +20,7 @@ from app.domain.enums import (
     JobStage,
     JobStatus,
     OfferStatus,
+    Role,
 )
 from app.domain.finance import build_annuity_schedule, build_revolving_schedule
 from app.domain.products import required_documents
@@ -49,10 +50,6 @@ from app.services.workflow import local_today, utcnow
 def local_time(dt):
     """Время в часовом поясе клиента (по умолчанию московское) — сервер в контейнере живёт в UTC."""
     return dt.astimezone(ZoneInfo(get_settings().display_timezone))
-
-
-def fmt_money(v) -> str:
-    return f"{float(v):,.0f}".replace(",", " ") + " ₽"
 
 
 def product_out(p) -> dict:
@@ -493,14 +490,34 @@ def bank_rows(db: Session, apps: list[Application]) -> list[dict]:
         select(Decision).where(Decision.application_id.in_(ids)).order_by(Decision.created_at, Decision.id)
     ):
         decisions[d.application_id] = d
-    return [bank_row(db, a, scorings.get(a.id), decisions.get(a.id)) for a in apps]
+    # последнее сообщение по каждой заявке: если писал клиент — он ждёт ответа
+    last_authors = dict(
+        db.execute(
+            select(Message.application_id, Message.author_role)
+            .where(Message.application_id.in_(ids))
+            .order_by(Message.application_id, Message.id.desc())
+            .distinct(Message.application_id)
+        ).all()
+    )
+    return [
+        bank_row(db, a, scorings.get(a.id), decisions.get(a.id), last_authors.get(a.id) == Role.CLIENT) for a in apps
+    ]
 
 
-def bank_row(db: Session, app: Application, scoring=_UNSET, d=_UNSET) -> dict:
+def awaiting_reply(db: Session, app_id) -> bool:
+    last = db.scalar(
+        select(Message.author_role).where(Message.application_id == app_id).order_by(Message.id.desc()).limit(1)
+    )
+    return last == Role.CLIENT
+
+
+def bank_row(db: Session, app: Application, scoring=_UNSET, d=_UNSET, waiting=_UNSET) -> dict:
     if scoring is _UNSET:
         scoring = latest_scoring(db, app.id)
     if d is _UNSET:
         d = latest_decision(db, app.id)
+    if waiting is _UNSET:
+        waiting = awaiting_reply(db, app.id)
     now = utcnow()
     return {
         "id": app.id,
@@ -525,6 +542,7 @@ def bank_row(db: Session, app: Application, scoring=_UNSET, d=_UNSET) -> dict:
         "triggers": ["Выдача не прошла — повторите её, когда АБС снова доступна"]
         if disbursement_failed(db, app)
         else _triggers(d),
+        "awaiting_reply": waiting,
     }
 
 

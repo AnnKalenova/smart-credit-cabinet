@@ -1197,6 +1197,15 @@ hr.rule {
   border-radius: 3px 3px 0 0;
   background: var(--accent);
 }
+.tabs .tab-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 2px;
+}
 .tabs .count {
   margin-left: 6px;
   font-size: 12px;

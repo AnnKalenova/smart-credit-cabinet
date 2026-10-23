@@ -406,6 +406,7 @@ export interface BankRow {
   review_due_at: string | null;
   sla_overdue: boolean;
   triggers: string[];
+  awaiting_reply: boolean;
 }
 
 export interface Factor {
