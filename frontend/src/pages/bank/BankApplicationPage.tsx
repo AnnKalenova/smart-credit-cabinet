@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, FileText, Plus, RotateCcw, Send, Trash2, UserCheck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, download } from "../../api/client";
-import type { BankApplication, BankDecision, Message } from "../../api/types";
+import type { BankApplication, BankDecision, Message, SourcePayload } from "../../api/types";
 import { AmountInput, Field, Grade, Loader, Timeline, TurnoverBars, bankTone } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
 import { date, dateTime, formatInputAmount, money, parseAmount, pct, rateRange, relativeDue } from "../../lib/format";
@@ -543,7 +543,7 @@ function Sources({ app }: { app: BankApplication }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {bki.loans.map((l: Record<string, any>, i: number) => (
+                  {bki.loans.map((l: SourcePayload, i: number) => (
                     <tr key={i}>
                       <td>{l.creditor}</td>
                       <td>{l.type}</td>
@@ -698,9 +698,8 @@ export function BankApplicationPage() {
     queryFn: () => api<BankApplication>(`/api/v1/bank/applications/${id}`),
     refetchInterval: 3000,
   });
+  // новое решение по заявке — форма решения начинается заново
   const decisionKey = useMemo(() => q.data?.decisions.map((d) => d.id).join(",") ?? "", [q.data]);
-  const [formKey, setFormKey] = useState(0);
-  useEffect(() => setFormKey((k) => k + 1), [decisionKey]);
 
   const act = async (path: string, ok: string) => {
     try {
@@ -807,7 +806,7 @@ export function BankApplicationPage() {
                   </ul>
                 </section>
               )}
-              <DecisionForm key={formKey} app={app} />
+              <DecisionForm key={decisionKey} app={app} />
             </>
           ) : (
             <section className="panel">

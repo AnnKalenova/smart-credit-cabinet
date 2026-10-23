@@ -473,6 +473,22 @@ export interface PricingHint {
   max_rate: number;
 }
 
+/** Показатели, на которых построен рейтинг (backend/app/domain/scoring.py). */
+export interface ScoringMetrics {
+  avg_monthly_turnover: number;
+  effective_monthly_turnover: number;
+  existing_monthly_payments: number;
+  new_monthly_payment: number;
+  dti: number;
+  dti_with_new: number | null;
+  bki_score: number | null;
+  [key: string]: number | null;
+}
+
+/** Ответ внешней системы как есть: состав полей у источников разный, интерфейс читает их выборочно. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type SourcePayload = Record<string, any>;
+
 /** Место под новый платёж в ограничении долговой нагрузки — для решения специалиста. */
 export interface LoadInfo {
   existing_monthly_payments: number;
@@ -509,7 +525,7 @@ export interface BankApplication extends BankRow {
     headcount: number | null;
     members: { full_name: string; position_label: string; can_sign: boolean }[];
   };
-  sources: Record<string, { payload: Record<string, any>; fetched_at: string }>;
+  sources: Record<string, { payload: SourcePayload; fetched_at: string }>;
   scoring: {
     score: number;
     grade: string;
@@ -517,7 +533,7 @@ export interface BankApplication extends BankRow {
     pd: number;
     model_version: string;
     factors: Factor[];
-    metrics: Record<string, any>;
+    metrics: ScoringMetrics;
     created_at: string;
   } | null;
   checks: { code: string; severity: string; message: string }[];

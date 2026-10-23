@@ -72,8 +72,10 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - run: npm run lint --if-present
-      - run: npm run build
+      - name: ESLint — TypeScript и правила хуков React
+        run: npm run lint
+      - name: Проверка типов и сборка
+        run: npm run build
 
   e2e-docker:
     name: Docker Compose — сквозные сценарии

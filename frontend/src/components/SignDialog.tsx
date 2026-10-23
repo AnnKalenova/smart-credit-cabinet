@@ -25,18 +25,23 @@ export function SignDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const requestCode = async () => {
+  const ask = () => api<SignChallenge>(`/api/v1/applications/${appId}/sign-challenges`, { method: "POST", json: { purpose } });
+  const requestCode = () => {
     setError(null);
     setCode("");
-    try {
-      setChallenge(await api<SignChallenge>(`/api/v1/applications/${appId}/sign-challenges`, { method: "POST", json: { purpose } }));
-    } catch (e) {
-      setError(errorText(e));
-    }
+    ask().then(setChallenge, (e) => setError(errorText(e)));
   };
 
+  // код запрашивается один раз при открытии окна; «Отправить ещё раз» — по кнопке
   useEffect(() => {
-    void requestCode();
+    let open = true;
+    ask().then(
+      (c) => open && setChallenge(c),
+      (e) => open && setError(errorText(e)),
+    );
+    return () => {
+      open = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

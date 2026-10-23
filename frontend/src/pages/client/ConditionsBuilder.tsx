@@ -201,14 +201,17 @@ export function ConditionsBuilder({ app }: { app: Application }) {
   });
   // условия, которые сотрудник передал руководителю, открываются у руководителя сразу в конструкторе
   const proposal = app.permissions.can_sign ? app.proposed_conditions : null;
-  useEffect(() => {
-    if (!initial.data || cond) return;
-    qc.setQueryData(["simulation", app.id, initial.data.base], initial.data);
+  // стартовые условия — один раз, когда пришёл первый расчёт (состояние из ответа, без лишнего эффекта)
+  if (initial.data && !cond) {
     const fromProposal = proposal && initial.data.products.some((p) => p.code === proposal.conditions.product_code);
     const start = fromProposal ? proposal.conditions : initial.data.base;
     setCond(start);
     setAmountText(formatInputAmount(start.amount));
-  }, [initial.data, cond, app.id, qc, proposal]);
+  }
+  // расчёт для условий заявки уже есть — второй раз за ним не ходим
+  useEffect(() => {
+    if (initial.data) qc.setQueryData(["simulation", app.id, initial.data.base], initial.data);
+  }, [initial.data, app.id, qc]);
 
   const products = initial.data?.products ?? [];
   const product = products.find((p) => p.code === cond?.product_code);

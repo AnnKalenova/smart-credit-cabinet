@@ -133,7 +133,9 @@ export function Modal({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
-  close.current = onClose;
+  useEffect(() => {
+    close.current = onClose; // Escape закрывает окно актуальным обработчиком
+  });
   // элемент, с которого открыли окно, — запоминается при первом рендере, до фокуса внутри окна
   const [opener] = useState(() => document.activeElement as HTMLElement | null);
   useEffect(() => {
