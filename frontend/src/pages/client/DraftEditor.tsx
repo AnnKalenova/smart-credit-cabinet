@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { CircleCheck, RotateCcw, Send, ShieldCheck, UserRoundCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useBlocker } from "react-router-dom";
 import { ApiError, api, getToken } from "../../api/client";
 import type { Application, CompanyProfile, MatchResult, Product } from "../../api/types";
 import { SignDialog } from "../../components/SignDialog";
@@ -62,6 +63,8 @@ export function DraftEditor({ app }: { app: Application }) {
   const [problems, setProblems] = useState<string[]>([]);
   const [signing, setSigning] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [edited, setEdited] = useState(false);
+  const blocker = useBlocker(() => edited && Boolean(getToken()));
   // изменения, которых ещё нет на сервере; при ошибке сохранения они остаются здесь до следующей попытки
   const dirty = useRef<Partial<Record<keyof Draft, unknown>>>({});
   const timer = useRef<number | undefined>(undefined);
@@ -79,6 +82,34 @@ export function DraftEditor({ app }: { app: Application }) {
   // выход из кабинета сначала сохраняет правки, которые ждут автосохранения (пока вход ещё действует)
   const saveNow = useRef<() => Promise<void>>(() => Promise.resolve());
   useEffect(() => registerSaver(() => saveNow.current()), []);
+
+  // Ссылки и кнопка «Назад» ждут сохранения. При сбое форма остаётся открытой с правками.
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    let active = true;
+    saveNow.current().then(
+      () => {
+        if (active) blocker.proceed();
+      },
+      () => {
+        if (!active) return;
+        setProblems(["Переход отменён: не удалось сохранить изменения. Проверьте связь и попробуйте ещё раз."]);
+        blocker.reset();
+      },
+    );
+    return () => { active = false; };
+  }, [blocker]);
+
+  // Перезагрузку и закрытие вкладки контролирует браузер, а не маршрутизатор.
+  useEffect(() => {
+    if (!edited) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [edited]);
 
   const products = useQuery({ queryKey: ["products"], queryFn: () => api<Product[]>("/api/v1/products"), staleTime: 60_000 });
   const profile = useQuery({
@@ -107,7 +138,10 @@ export function DraftEditor({ app }: { app: Application }) {
       setSaveError(errorText(e));
       throw e;
     }
-    if (Object.keys(dirty.current).length === 0) setSaved("saved");
+    if (Object.keys(dirty.current).length === 0) {
+      setSaved("saved");
+      setEdited(false);
+    }
     refresh();
   };
 
@@ -145,10 +179,12 @@ export function DraftEditor({ app }: { app: Application }) {
       if (Object.keys(dirty.current).length === 0 || !getToken()) return;
       flush().catch((e) => toast.error(new ApiError(0, `Последние изменения в черновике не сохранились. ${errorText(e)}`)));
     };
-    saveNow.current = () => (Object.keys(dirty.current).length ? flush().catch(() => undefined) : Promise.resolve());
+    // Ждём также уже отправленный PATCH: dirty в это время может быть пустым.
+    saveNow.current = saveAll;
   });
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K], immediate = false) => {
+    setEdited(true);
     setD((prev) => ({ ...prev, [key]: value }));
     if (key === "amount") {
       // сумма обязательна: пустое или нулевое значение не сохраняем, пока клиент не введёт число

@@ -4,6 +4,8 @@
    суммой, а когда связь восстановилась, уходит с суммой из формы.
 2. Автосохранение идёт медленно: отправка ждёт, пока правка дойдёт до банка, и не обгоняет её.
 3. Клиент изменил сумму и сразу ушёл из черновика или вышел из кабинета: правка всё равно сохраняется.
+4. При сбое сохранения переход, «Назад» и выход отменяются; после восстановления связи правка сохраняется.
+5. Медленный запрос не теряется при выходе, а перезагрузка предупреждает о несохранённых изменениях.
 
     pip install playwright httpx && python -m playwright install chromium
     python e2e/ui_checks.py --base-url http://localhost:8080
@@ -141,11 +143,130 @@ async def check_logout_right_after_edit(page: Page, base: str) -> str:
     return "сумма 550 000 ₽ сохранилась, хотя клиент сразу вышел из кабинета"
 
 
+async def fail_patches(route: Route) -> None:
+    if route.request.method == "PATCH":
+        await route.fulfill(status=503, json={"detail": "Сервис временно недоступен"})
+    else:
+        await route.continue_()
+
+
+async def check_navigation_during_failure(page: Page, base: str) -> str:
+    c, app = new_draft(base)
+    url = f"/api/v1/applications/{app['id']}"
+    await open_draft(page, base, app["id"])
+    await page.route(f"**{url}", fail_patches)
+    await page.get_by_label("Сумма").fill("870000")
+    await expect(page.get_by_text("Изменения не сохранены")).to_be_visible()
+    await page.get_by_role("link", name="Главная", exact=True).first.click()
+    await expect(page.get_by_text("Переход отменён", exact=False)).to_be_visible()
+    await expect(page).to_have_url(f"{base}/c/applications/{app['id']}")
+    await expect(page.get_by_label("Сумма")).to_have_value(re.compile(r"^870\s000$"))
+    assert c.req("GET", url)["amount"] == 300_000
+    await page.unroute(f"**{url}", fail_patches)
+    await page.get_by_role("link", name="Главная", exact=True).first.click()
+    await expect(page).to_have_url(f"{base}/c")
+    assert c.req("GET", url)["amount"] == 870_000
+    await page.goto(f"{base}/c/applications/{app['id']}")
+    await expect(page.get_by_label("Сумма")).to_have_value(re.compile(r"^870\s000$"))
+    return "при HTTP 503 переход отменён; после восстановления сохранены 870 000 ₽"
+
+
+async def check_back_during_failure(page: Page, base: str) -> str:
+    c, app = new_draft(base)
+    url = f"/api/v1/applications/{app['id']}"
+    await open_draft(page, base, app["id"])
+    # Обе записи истории созданы маршрутизатором: проверяем именно браузерный POP-переход.
+    await page.get_by_role("link", name="Главная", exact=True).first.click()
+    await page.locator(f'a[href="/c/applications/{app["id"]}"]').first.click()
+    await page.route(f"**{url}", fail_patches)
+    await page.get_by_label("Сумма").fill("880000")
+    await expect(page.get_by_text("Изменения не сохранены")).to_be_visible()
+    await page.evaluate("history.back()")
+    await expect(page.get_by_text("Переход отменён", exact=False)).to_be_visible()
+    await expect(page).to_have_url(f"{base}/c/applications/{app['id']}")
+    await expect(page.get_by_label("Сумма")).to_have_value(re.compile(r"^880\s000$"))
+    await page.unroute(f"**{url}", fail_patches)
+    await page.evaluate("history.back()")
+    await expect(page).to_have_url(f"{base}/c")
+    assert c.req("GET", url)["amount"] == 880_000
+    return "кнопка «Назад» не теряет правку при ошибке сохранения"
+
+
+async def check_logout_during_failure(page: Page, base: str) -> str:
+    c, app = new_draft(base)
+    url = f"/api/v1/applications/{app['id']}"
+    await open_draft(page, base, app["id"])
+    await page.route(f"**{url}", fail_patches)
+    await page.get_by_label("Сумма").fill("890000")
+    await expect(page.get_by_text("Изменения не сохранены")).to_be_visible()
+    await page.get_by_label("Выйти").click()
+    await expect(page.get_by_text("Выход отменён", exact=False)).to_be_visible()
+    await expect(page).to_have_url(f"{base}/c/applications/{app['id']}")
+    await expect(page.get_by_label("Сумма")).to_have_value(re.compile(r"^890\s000$"))
+    await page.unroute(f"**{url}", fail_patches)
+    await page.get_by_label("Выйти").click()
+    await expect(page).to_have_url(f"{base}/login")
+    assert c.req("GET", url)["amount"] == 890_000
+    return "ошибка сохранения отменяет выход; повторный выход сохраняет 890 000 ₽"
+
+
+async def check_logout_waits_for_inflight_save(page: Page, base: str) -> str:
+    c, app = new_draft(base)
+    url = f"/api/v1/applications/{app['id']}"
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow(route: Route) -> None:
+        if route.request.method == "PATCH":
+            started.set()
+            await release.wait()
+        await route.continue_()
+
+    await open_draft(page, base, app["id"])
+    await page.route(f"**{url}", slow)
+    try:
+        await page.get_by_label("Сумма").fill("760000")
+        await asyncio.wait_for(started.wait(), timeout=10)
+        await page.get_by_label("Выйти").click()
+        await expect(page.get_by_text("Выход отменён", exact=False)).to_be_visible(timeout=6000)
+        await expect(page).to_have_url(f"{base}/c/applications/{app['id']}")
+        await expect(page.get_by_label("Сумма")).to_have_value(re.compile(r"^760\s000$"))
+    finally:
+        release.set()
+    saved = await asyncio.to_thread(wait_for, c, url, lambda a: a["amount"] == 760_000)
+    assert saved["amount"] == 760_000
+    await page.get_by_label("Выйти").click()
+    await expect(page).to_have_url(f"{base}/login")
+    return "таймаут не закрыл форму во время PATCH; после ответа сервера выход разрешён"
+
+
+async def check_reload_warns_about_changes(page: Page, base: str) -> str:
+    c, app = new_draft(base)
+    url = f"/api/v1/applications/{app['id']}"
+    await open_draft(page, base, app["id"])
+    await page.route(f"**{url}", fail_patches)
+    await page.get_by_label("Сумма").fill("810000")
+    await expect(page.get_by_text("Изменения не сохранены")).to_be_visible()
+    async with page.expect_event("dialog") as event:
+        await page.evaluate("setTimeout(() => location.reload(), 0)")
+    dialog = await event.value
+    assert dialog.type == "beforeunload"
+    await dialog.dismiss()
+    await expect(page.get_by_label("Сумма")).to_have_value(re.compile(r"^810\s000$"))
+    assert c.req("GET", url)["amount"] == 300_000
+    return "браузер предупредил перед перезагрузкой; отмена сохранила правку в форме"
+
+
 CHECKS = [
     ("Ошибка автосохранения не отправляет старую сумму", check_failed_autosave),
     ("Отправка ждёт медленного автосохранения", check_slow_autosave),
     ("Правка сохраняется при уходе из черновика", check_leave_right_after_edit),
     ("Правка сохраняется при выходе из кабинета", check_logout_right_after_edit),
+    ("Сбой сохранения отменяет переход", check_navigation_during_failure),
+    ("Сбой сохранения отменяет «Назад»", check_back_during_failure),
+    ("Сбой сохранения отменяет выход", check_logout_during_failure),
+    ("Выход ждёт уже отправленный PATCH", check_logout_waits_for_inflight_save),
+    ("Перезагрузка предупреждает о правках", check_reload_warns_about_changes),
 ]
 
 

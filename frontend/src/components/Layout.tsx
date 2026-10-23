@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, LogOut } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import type { Notification } from "../api/types";
 import { useAuth } from "../lib/auth";
 import { dateTime } from "../lib/format";
 import { savePending } from "../lib/pendingSaves";
+import { useToast } from "../lib/toast";
 
 function Notifications() {
   const qc = useQueryClient();
@@ -106,6 +107,7 @@ export function Brand({ title, subtitle }: { title: string; subtitle: string }) 
 export function Layout({ children, area }: { children: ReactNode; area: "client" | "bank" }) {
   const { me, company, setCompanyId, logout } = useAuth();
   const nav = useNavigate();
+  const toast = useToast();
   if (!me) return null;
   const isClient = area === "client";
   return (
@@ -154,9 +156,13 @@ export function Layout({ children, area }: { children: ReactNode; area: "client"
                 aria-label="Выйти"
                 title="Выйти"
                 onClick={async () => {
-                  await savePending(); // правка в черновике, которую автосохранение ещё не отправило
-                  logout();
-                  nav("/login");
+                  try {
+                    await savePending();
+                    logout();
+                    nav("/login");
+                  } catch {
+                    toast.error(new ApiError(0, "Выход отменён: изменения в черновике ещё не сохранены. Проверьте связь и попробуйте ещё раз."));
+                  }
                 }}
               >
                 <LogOut size={18} />

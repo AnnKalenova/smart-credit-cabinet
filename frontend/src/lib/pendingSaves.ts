@@ -8,8 +8,17 @@ export function registerSaver(save: () => Promise<void>): () => void {
   };
 }
 
-/** Сохраняет всё, что ждёт сохранения, но не дольше timeoutMs: выход из кабинета не должен зависнуть. */
+/** Ошибка или таймаут отменяют выход: вызывающий код сохраняет сессию и открытую форму. */
 export async function savePending(timeoutMs = 3000): Promise<void> {
-  const all = Promise.allSettled([...savers].map((save) => save()));
-  await Promise.race([all, new Promise((resolve) => window.setTimeout(resolve, timeoutMs))]);
+  let timer: number | undefined;
+  try {
+    await Promise.race([
+      Promise.all([...savers].map((save) => save())),
+      new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error("Сохранение ещё не завершилось")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    window.clearTimeout(timer);
+  }
 }

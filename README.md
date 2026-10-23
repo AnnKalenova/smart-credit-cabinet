@@ -258,6 +258,9 @@ cd ../frontend && npm ci && npm run dev   # http://localhost:5173, /api уход
 cd backend && pytest                       # 238 тестов: 133 модульных и 105 интеграционных
 ruff check . && ruff format --check .      # линтер и форматирование
 cd ../frontend && npm run lint && npm run build   # ESLint, проверка типов TypeScript и сборка
+cd ..                                      # вернуться в корень: каталог e2e находится здесь
+python -m pip install httpx==0.28.1 playwright==1.64.1
+python -m playwright install chromium
 python e2e/api_scenarios.py --base-url http://localhost:8080   # сквозные сценарии на стенде
 python e2e/ui_checks.py --base-url http://localhost:8080       # проверки интерфейса в браузере (Playwright)
 python e2e/ui_tour.py --base-url http://localhost:8080         # прогон в браузере со скриншотами
@@ -268,10 +271,14 @@ python e2e/ui_tour.py --base-url http://localhost:8080         # прогон в
 Модульным тестам база не нужна:
 
 ```bash
+cd backend                              # из корня репозитория
 pytest tests/test_finance.py tests/test_scoring.py tests/test_policy.py tests/test_statuses_checks.py tests/test_storage_worker.py tests/test_contracts.py
 ```
 
-Сквозные сценарии и Postman-коллекцию лучше гонять на чистом стенде: выданные кредиты увеличивают долговую нагрузку демо-компаний. Перед повтором — `docker compose down -v && docker compose up -d --build`.
+Перед сдачей создайте новый тег на проверенном коммите и передайте жюри его полный hash.
+Порядок подготовки версии, демо и проверки продуктовых гипотез — в [docs/submission-checklist.md](docs/submission-checklist.md).
+
+Сквозные сценарии и Postman-коллекцию лучше гонять на чистом стенде: выданные кредиты увеличивают долговую нагрузку демо-компаний. На отдельном локальном стенде с ненужными тестовыми данными можно выполнить `docker compose down -v && docker compose up -d --build` — это удалит его Docker-тома. Для опубликованного демо используйте `sudo bash deploy/reset-demo.sh`: он удаляет заявки, кредиты и изменения политики, но сохраняет настройки публикации и сертификаты. Обычное обновление приложения сброса не требует.
 
 ## Документация
 
@@ -298,7 +305,7 @@ pytest tests/test_finance.py tests/test_scoring.py tests/test_policy.py tests/te
 
 | Требование (стр. 7 и 10–11 кейса) | Где смотреть |
 |---|---|
-| Код в GitHub с историей коммитов и понятной версией | история коммитов, тег `v1.1.0` |
+| Код в GitHub с историей коммитов и понятной версией | история коммитов; в заявке на отбор — точный commit hash (`git rev-parse HEAD`) и новый тег сдачи после проверок |
 | Cloud-native, запуск в Docker одной командой | `docker-compose.yml`, `docker compose up -d --build` |
 | Публикация в облаке (желательно) | [deploy/](deploy/README.md): тот же Compose за Caddy с HTTPS от Let's Encrypt |
 | Зафиксированные версии языка и библиотек | `requirements.txt` с хешами, `package-lock.json`, теги образов |
