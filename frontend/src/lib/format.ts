@@ -57,9 +57,12 @@ export function months(n: number): string {
   return `${n} ${plural(n, "месяц", "месяца", "месяцев")}`;
 }
 
+// трёхбуквенные подписи месяцев: помещаются под столбиками графика и на узком экране
+const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+
 export function monthShort(ym: string): string {
-  const [y, m] = ym.split("-").map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString("ru-RU", { month: "short" }).replace(".", "");
+  const m = Number(ym.split("-")[1]);
+  return MONTHS_SHORT[m - 1] ?? ym;
 }
 
 export function relativeDue(v: string | null): { text: string; overdue: boolean } {

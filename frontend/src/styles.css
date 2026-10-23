@@ -1513,7 +1513,6 @@ hr.rule {
 .bars-labels span {
   flex: 1;
   min-width: 0; /* на узком экране подпись не распирает строку */
-  overflow: hidden;
   text-align: center;
   font-size: 10px;
   color: var(--faint);
