@@ -1,0 +1,47 @@
+# Публикация на сервере с доменом и HTTPS. Поверх основного docker-compose.yml добавляется Caddy:
+# он принимает запросы на 80/443, сам получает сертификат Let's Encrypt и продлевает его.
+#
+#   ./deploy/init.sh                  # один раз: домен, почта, пароли → deploy/.env
+#   ./deploy/compose.sh up -d --build # запуск и обновление
+#
+# Подробно — deploy/README.md.
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?укажите DOMAIN в deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:?укажите ACME_EMAIL в deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # выпущенные сертификаты: не удаляйте, иначе Let's Encrypt будет выпускать их заново
+      - caddy-config:/config
+    networks:
+      - edge
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    # снаружи интерфейс доступен только через Caddy (порт на хосте — WEB_PORT=127.0.0.1:8080 в deploy/.env)
+    volumes:
+      - ./deploy/nginx/real-ip.conf:/etc/nginx/conf.d/real-ip.conf:ro
+    networks:
+      - default
+      - edge
+
+networks:
+  edge:
+    # фиксированная подсеть: nginx доверяет адресу посетителя только из заголовков, пришедших отсюда
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24
+
+volumes:
+  caddy-data:
+  caddy-config:

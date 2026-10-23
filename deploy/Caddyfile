@@ -1,0 +1,18 @@
+# Домен и почта — из deploy/.env. Caddy сам получает сертификат Let's Encrypt для домена,
+# продлевает его и перенаправляет http:// на https://.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy web:80
+}
+
+# Если нужен и www: добавьте A-запись www на тот же сервер и раскомментируйте блок.
+# www.{$DOMAIN} {
+# 	redir https://{$DOMAIN}{uri} permanent
+# }
