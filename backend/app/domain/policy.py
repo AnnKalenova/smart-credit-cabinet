@@ -33,6 +33,8 @@ STATEMENT_HAIRCUT = 0.8  # подтверждённая выпиской выр�
 # ...и не больше чем вдвое выше поступлений на счёт в банке: выписку из другого банка автоматически не разбираем
 CONFIRMED_REVENUE_CAP = 2.0
 TAX_ARREARS_MANUAL = 300_000
+# после отказа кредитного специалиста новые заявки компании в течение этого срока решает человек
+MANUAL_DECLINE_MEMORY_DAYS = 90
 
 
 @dataclass
@@ -128,6 +130,8 @@ class PolicyInput:
     bki: dict
     documents: set[str] = field(default_factory=set)  # типы приложенных документов
     registration_date: date | None = None
+    # недавний отказ кредитного специалиста по другой заявке компании: «№ 2026-000012 от 23.10.2026»
+    prior_manual_decline: str | None = None
 
 
 @dataclass
@@ -360,6 +364,16 @@ def info_checks(inp: PolicyInput) -> list[dict]:
 
 def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info: bool) -> list[Reason]:
     reasons: list[Reason] = []
+    if inp.prior_manual_decline:
+        # решение специалиста не обходится новой заявкой с другими условиями
+        reasons.append(
+            Reason(
+                "prior_manual_decline",
+                "MANUAL",
+                f"Кредитный специалист отказал по заявке {inp.prior_manual_decline}",
+                "Заявку рассмотрит кредитный специалист",
+            )
+        )
     top_amount = max([o.amount for o in offers], default=inp.amount)
     product_by_code = {p.code: p for p in [inp.product, *inp.alt_products]}
     for o in offers:

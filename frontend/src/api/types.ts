@@ -538,6 +538,7 @@ export interface Dashboard {
   avg_minutes_to_issue: number | null;
   manual_queue: number;
   manual_overdue: number;
+  failed_disbursements: number;
   issued_amount: number;
   by_product: { product_code: string; count: number; amount: number }[];
   integrations_last_hour: { service: string; calls: number; errors: number; avg_ms: number }[];

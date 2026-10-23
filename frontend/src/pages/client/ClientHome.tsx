@@ -152,7 +152,7 @@ export function ClientHome() {
 
           {p && (
             <section className="panel">
-              <h3>Компания</h3>
+              <h3>{p.kind === "IP" ? "Предприниматель" : "Компания"}</h3>
               <dl className="kv">
                 <dt>ИНН</dt>
                 <dd>{p.inn}</dd>

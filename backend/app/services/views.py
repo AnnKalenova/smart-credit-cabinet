@@ -353,7 +353,7 @@ def client_status_view(db: Session, app: Application, offers: list[Offer], membe
         )
     elif status == AppStatus.DISBURSEMENT and disbursement_failed(db, app):
         view["now"] = "Выдача задерживается: учётная система банка не ответила вовремя."
-        view["next"] = "Специалист банка уже получил уведомление и повторит выдачу. От вас ничего не требуется."
+        view["next"] = "Заявка — в очереди специалиста банка, он повторит выдачу. От вас ничего не требуется."
     elif status == AppStatus.DECLINED:
         d = latest_decision(db, app.id)
         fixable = d is not None and not any(
@@ -751,6 +751,12 @@ def dashboard(db: Session) -> dict:
         or 0
     )
     issued_amount = db.scalar(select(func.coalesce(func.sum(Loan.amount), 0))) or 0
+    # выдачи, которые не прошли после всех попыток и ждут повтора специалистом
+    failed_disbursements = sum(
+        1
+        for a in db.scalars(select(Application).where(Application.status == AppStatus.DISBURSEMENT))
+        if disbursement_failed(db, a)
+    )
     by_product = [
         {"product_code": code, "count": cnt, "amount": float(amt or 0)}
         for code, cnt, amt in db.execute(
@@ -804,6 +810,7 @@ def dashboard(db: Session) -> dict:
         "avg_minutes_to_decision": avg_minutes(Application.decided_at, Application.submitted_at),
         "avg_minutes_to_issue": avg_minutes(Application.issued_at, Application.submitted_at),
         "manual_queue": manual_queue,
+        "failed_disbursements": failed_disbursements,
         "manual_overdue": overdue,
         "issued_amount": float(issued_amount),
         "by_product": by_product,

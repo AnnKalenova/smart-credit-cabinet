@@ -722,7 +722,7 @@ export function BankApplicationPage() {
               <RotateCcw size={17} /> Повторить проверку
             </button>
           )}
-          {!mine && app.status === "MANUAL_REVIEW" && (
+          {!mine && app.status === "MANUAL_REVIEW" && (!app.assignee || me?.user.role === "RISK_MANAGER") && (
             <button className="btn btn-primary" onClick={() => act("assign", "Заявка закреплена за вами")}>
               <UserCheck size={17} /> Взять в работу
             </button>

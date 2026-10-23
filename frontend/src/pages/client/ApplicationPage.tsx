@@ -45,7 +45,7 @@ function ProcessingPanel({ app }: { app: Application }) {
     <section className="panel">
       <h2>Что проверяет банк</h2>
       <p className="small muted" style={{ marginTop: 6 }}>
-        Проверка автоматическая: сведения о компании банк запрашивает сам, без справок от вас.
+        Проверка автоматическая: сведения о бизнесе банк запрашивает сам, без справок от вас.
       </p>
       <div className="stack-s" style={{ marginTop: 14 }}>
         {PIPELINE.map((s) => {

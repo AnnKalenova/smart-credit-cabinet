@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.enums import AppStatus, DocType, OfferStatus, Purpose
+from app.config import get_settings
+from app.domain.enums import AppStatus, DecisionKind, DecisionOutcome, DocType, OfferStatus, Purpose
 from app.domain.finance import floor_to, offer_economics
 from app.domain.policy import (
     CONFIRMED_REVENUE_CAP,
     GRADE_LIMIT_FACTOR,
+    MANUAL_DECLINE_MEMORY_DAYS,
     STATEMENT_HAIRCUT,
     PolicyInput,
     ProductParams,
@@ -26,6 +29,7 @@ from app.models import (
     AccountTurnover,
     Application,
     Company,
+    Decision,
     EnrichmentResult,
     Loan,
     Offer,
@@ -82,6 +86,29 @@ def own_obligations(db: Session, company_id, exclude_app_id=None) -> float:
         q = q.where(Application.id != exclude_app_id)
     total += sum(float(x) for x in db.scalars(q))
     return round(total, 2)
+
+
+def prior_manual_decline(db: Session, company_id, exclude_app_id, as_of: date) -> str | None:
+    """Отказ кредитного специалиста по другой заявке компании за последние 90 дней — «№ … от …»."""
+    since = as_of - timedelta(days=MANUAL_DECLINE_MEMORY_DAYS)
+    row = db.execute(
+        select(Application.number, Decision.created_at)
+        .join(Decision, Decision.application_id == Application.id)
+        .where(
+            Application.company_id == company_id,
+            Application.id != exclude_app_id,
+            Decision.kind == DecisionKind.MANUAL,
+            Decision.outcome == DecisionOutcome.DECLINE,
+            Decision.created_at >= since,
+        )
+        .order_by(Decision.created_at.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    number, decided_at = row
+    local = decided_at.astimezone(ZoneInfo(get_settings().display_timezone))
+    return f"№ {number} от {local.strftime('%d.%m.%Y')}"
 
 
 def active_products(db: Session) -> list[Product]:
@@ -164,6 +191,7 @@ def build_policy_input(
         bki=sources.get("BKI", {}),
         documents={d.doc_type for d in app.documents},
         registration_date=company.registration_date,
+        prior_manual_decline=prior_manual_decline(db, company.id, app.id, as_of),
     )
 
 

@@ -329,7 +329,8 @@ def test_only_assignee_or_risk_manager_decides(login):
     a, r = login("analyst"), login("risk")
     r.call("POST", _bank(app, "/assign"))
     resp = a.call("POST", _bank(app, "/decision"), json={"action": "DECLINE", "reason": "Причина"}, expect=409)
-    assert "Решение может принять он или риск-менеджер" in resp["detail"]
+    assert resp["detail"].startswith("Заявку рассматривает ")
+    assert resp["detail"].endswith(": решение принимает этот специалист или риск-менеджер")
     requested = {"product_code": "INVESTMENT", "amount": 25_000_000, "term_months": 60}
     alternative = {"product_code": "INVESTMENT", "amount": 20_000_000, "term_months": 60}
     r.call("POST", _bank(app, "/decision"), json={"action": "APPROVE", "offers": [requested, alternative]})
@@ -350,7 +351,13 @@ def test_approval_needs_source_data(login):
     offer = {"product_code": "EXPRESS", "amount": 300_000, "term_months": 6}
     resp = a.call("POST", _bank(app, "/decision"), json={"action": "APPROVE", "offers": [offer]}, expect=409)
     assert "после проверки по ЕГРЮЛ, ФНС и БКИ" in resp["detail"]
-    a.call("POST", _bank(app, "/decision"), json={"action": "DECLINE", "reason": "Нет сведений о компании"})
+    # запросить информацию можно и без сведений из источников
+    # (отказ здесь не оформляем: он отправил бы следующие заявки компании к специалисту)
+    a.call(
+        "POST",
+        _bank(app, "/decision"),
+        json={"action": "REQUEST_INFO", "info_items": [{"type": "COMMENT", "label": "Подтвердите юридический адрес"}]},
+    )
 
 
 def test_bank_offer_limits_are_explained(login):
@@ -607,3 +614,100 @@ def test_bank_sees_that_client_waits_for_reply(login):
     assert a.call("GET", _bank(app))["awaiting_reply"] is True
     a.call("POST", _bank(app, "/messages"), json={"text": "Да, в любой день"})
     assert row()["awaiting_reply"] is False
+
+
+# --------------------------------------------------------------------------- второй раунд проверки
+
+
+def test_specialist_decline_is_not_bypassed_by_a_new_application(login):
+    c, a = login("nikitin"), login("analyst")
+    app = c.prepare_and_submit(
+        "WORKING_CAPITAL",
+        "CONTRACT",
+        8_000_000,
+        18,
+        docs=["CONTRACT_COPY", "FIN_STATEMENTS"],
+    )
+    assert app["status"] == "MANUAL_REVIEW", app["status"]
+    a.call("POST", _bank(app, "/decision"), json={"action": "DECLINE", "reason": "Недостаточное обеспечение"})
+    # конструктор не пересчитывает решение специалиста
+    resp = c.call("POST", _url(app, "/simulation"), json={}, expect=409)
+    assert resp["detail"] == "По заявке решение принял кредитный специалист — условия подбирает он"
+    # новая заявка на меньшую сумму всё равно попадает к специалисту
+    new = c.call("POST", _url(app, "/reapply"), json={"amount": 1_000_000})
+    c.sign_consents(new["id"])
+    c.submit(new["id"])
+    drain()
+    new = c.get(new["id"])
+    assert new["status"] == "MANUAL_REVIEW", new["status"]
+    triggers = a.call("GET", _bank(new))["triggers"]
+    assert any(t.startswith(f"Кредитный специалист отказал по заявке № {app['number']}") for t in triggers)
+
+
+def test_assigned_case_is_not_taken_over(login):
+    a, r = login("analyst"), login("risk")
+    app = _manual_review(login)
+    a.call("POST", _bank(app, "/assign"))
+    a.call("POST", _bank(app, "/assign"))  # повторно — без ошибки
+    # риск-менеджер может забрать заявку; аналитик — нет
+    r.call("POST", _bank(app, "/assign"))
+    resp = a.call("POST", _bank(app, "/assign"), expect=409)
+    assert resp["detail"].startswith("Заявку уже рассматривает ") and "риск-менеджер" in resp["detail"]
+    other = login("smirnov").prepare_and_submit("EXPRESS", "OTHER", 300_000, 6)
+    resp = a.call("POST", _bank(other, "/assign"), expect=409)
+    assert resp["detail"] == "Взять в работу можно заявку на ручном рассмотрении"
+
+
+def test_parent_is_set_only_by_reapply_and_conditions_are_checked(login):
+    c = login("smirnov")
+    first = c.draft("EXPRESS", "OTHER", 300_000, 6)
+    c.call("POST", _url(first, "/cancel"))
+    body = {
+        "company_id": c.company_id,
+        "product_code": "EXPRESS",
+        "purpose": "OTHER",
+        "amount": 300_000,
+        "term_months": 6,
+        "parent_id": first["id"],
+    }
+    assert c.call("POST", "/api/v1/applications", json=body)["parent_id"] is None
+    resp = c.call("POST", _url(first, "/reapply"), json={"amount": 0}, expect=422)
+    assert resp["detail"]["problems"] == ["Сумма: должно быть не меньше 1"]
+    resp = c.call("POST", _url(first, "/reapply"), json={"amount": 50_000}, expect=422)
+    assert resp["detail"] == "Сумма по продукту «Экспресс-кредит» — от 300\u00a0000 до 5\u00a0000\u00a0000\u00a0₽"
+    resp = c.call("POST", _url(first, "/reapply"), json={"term_months": 99}, expect=422)
+    assert resp["detail"] == "Срок по продукту «Экспресс-кредит» — 3–36 мес."
+    resp = c.call("PATCH", _url(c.draft("EXPRESS", "OTHER", 300_000, 6)), json={"amount": True}, expect=422)
+    assert resp["detail"]["problems"] == ["Сумма: должно быть числом"]
+
+
+def test_signer_does_not_ask_himself_and_consents_are_signed_once(login):
+    c = login("smirnov")
+    app = c.draft("EXPRESS", "OTHER", 300_000, 6)
+    resp = c.call("POST", _url(app, "/request-signature"), expect=409)
+    assert resp["detail"] == "У вас есть право подписи — подпишите сами"
+    c.sign_consents(app["id"])
+    ch = c.call("POST", _url(app, "/sign-challenges"), json={"purpose": "CONSENTS"})
+    resp = c.call(
+        "POST", _url(app, "/consents"), json={"challenge_id": ch["challenge_id"], "code": ch["demo_code"]}, expect=409
+    )
+    assert resp["detail"] == "Согласия уже подписаны"
+    titles = [e["title"] for e in c.get(app["id"])["events"]]
+    assert titles.count("Подписаны согласия на запрос в БКИ и обработку данных") == 1
+
+
+def test_demo_users_are_disabled_outside_demo_mode(api, monkeypatch):
+    from sqlalchemy import update as sa_update
+
+    import app.main as main
+    from app.db import SessionLocal
+    from app.models import User
+
+    try:
+        main._disable_demo_users()
+        assert api.post("/api/v1/auth/login", json={"login": "morozov", "password": "demo1234"}).status_code == 401
+    finally:
+        with SessionLocal() as db:
+            db.execute(sa_update(User).values(is_active=True))
+            db.commit()
+    assert api.post("/api/v1/auth/login", json={"login": "morozov", "password": "demo1234"}).status_code == 200

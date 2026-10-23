@@ -97,6 +97,7 @@ export function BankDashboard() {
           <div className="l">На ручном рассмотрении</div>
           <div className="v">{x.manual_queue}</div>
           <div className={`xs ${x.manual_overdue ? "sla-bad" : "faint"}`}>{x.manual_overdue ? `просрочено: ${x.manual_overdue}` : "просрочек нет"}</div>
+          {x.failed_disbursements > 0 && <div className="xs sla-bad">выдач на повтор: {x.failed_disbursements}</div>}
         </div>
         <div className="kpi">
           <div className="l">Решено автоматически</div>

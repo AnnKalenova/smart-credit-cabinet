@@ -46,6 +46,29 @@ DESCRIPTION = """
 """
 
 
+def _disable_demo_users() -> None:
+    """База могла остаться с демо-стенда: учётки с общеизвестным паролем вне демо-режима не работают."""
+    from sqlalchemy import update
+
+    from app.db import SessionLocal
+    from app.models import User
+    from app.seed import DEMO_ACCOUNTS
+
+    logins = [a["login"] for a in DEMO_ACCOUNTS]
+    if not logins:
+        return
+    try:
+        with SessionLocal() as db:
+            result = db.execute(
+                update(User).where(User.login.in_(logins), User.is_active.is_(True)).values(is_active=False)
+            )
+            db.commit()
+        if result.rowcount:
+            log.warning("демо-режим выключен: демо-учётки отключены", extra={"count": result.rowcount})
+    except Exception:  # noqa: BLE001 — например, схема ещё не создана: старт API это не блокирует
+        log.exception("не удалось отключить демо-учётки")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
@@ -54,6 +77,8 @@ async def lifespan(app: FastAPI):
             # вне демо-режима сервис не стартует с общеизвестным секретом подписи токенов
             raise RuntimeError("Задайте собственный JWT_SECRET: значение по умолчанию допустимо только в демо-режиме")
         log.warning("используется демо-значение JWT_SECRET — смените его вне демо-стенда")
+    if not settings.demo_mode:
+        _disable_demo_users()
     log.info("API запущен", extra={"environment": settings.environment})
     yield
 

@@ -179,6 +179,17 @@ def get_application(app_id: uuid.UUID, db: Session = Depends(get_db), user: User
 @router.post("/applications/{app_id}/assign", summary="Взять заявку в работу")
 def assign(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(staff)):
     app = _get_app(db, app_id)
+    if app.status != AppStatus.MANUAL_REVIEW:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Взять в работу можно заявку на ручном рассмотрении")
+    if app.assignee_id == user.id:
+        return {"ok": True}
+    if app.assignee_id is not None and user.role != Role.RISK_MANAGER:
+        owner = db.get(User, app.assignee_id)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Заявку уже рассматривает {owner.full_name if owner else 'другой специалист'}. "
+            "Передать её может риск-менеджер",
+        )
     app.assignee_id = user.id
     add_event(
         db,
@@ -244,8 +255,8 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
         owner = db.get(User, app.assignee_id)
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"Заявку рассматривает {owner.full_name if owner else 'другой специалист'}. "
-            "Решение может принять он или риск-менеджер",
+            f"Заявку рассматривает {owner.full_name if owner else 'другой специалист'}: "
+            "решение принимает этот специалист или риск-менеджер",
         )
     if app.assignee_id is None:
         app.assignee_id = user.id

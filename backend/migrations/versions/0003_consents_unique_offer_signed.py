@@ -28,6 +28,20 @@ def upgrade() -> None:
     )
     op.create_unique_constraint('uq_consents_application_type', 'consents', ['application_id', 'consent_type'])
     op.add_column('offers', sa.Column('signed_at', sa.DateTime(timezone=True), nullable=True))
+    # договоры, подписанные до обновления: дата подписания — из журнала событий
+    op.execute(
+        """
+        UPDATE offers o
+        SET signed_at = e.signed
+        FROM (
+            SELECT application_id, max(created_at) AS signed
+            FROM application_events
+            WHERE event_type = 'CONTRACT_SIGNED'
+            GROUP BY application_id
+        ) e
+        WHERE o.application_id = e.application_id AND o.status = 'ACCEPTED' AND o.signed_at IS NULL
+        """
+    )
     op.create_index('ix_login_attempts_ip', 'login_attempts', ['ip', 'created_at'], unique=False)
 
 

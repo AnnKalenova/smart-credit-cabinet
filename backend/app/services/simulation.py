@@ -10,15 +10,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.enums import AppStatus, DecisionOutcome
+from app.domain.enums import AppStatus, DecisionKind, DecisionOutcome
 from app.domain.finance import floor_to, offer_economics
 from app.domain.policy import DTI_CAP, ProductParams, evaluate, price
 from app.domain.products import NICE_TERMS, pledged
 from app.domain.scoring import months_between, score
 from app.domain.text import fmt_amount, fmt_money, fmt_rate, months_range
-from app.models import Application, Product
+from app.models import Application, Decision, Product
 from app.services import assessment
 from app.services.workflow import key_rate, local_today
 
@@ -93,6 +94,12 @@ class Simulator:
             raise SimulationError("Конструктор условий доступен после того, как банк оценит заявку", True)
         self.db = db
         self.app = app
+        last = db.scalar(
+            select(Decision).where(Decision.application_id == app.id).order_by(Decision.created_at.desc()).limit(1)
+        )
+        if last is not None and last.kind == DecisionKind.MANUAL and last.outcome == DecisionOutcome.DECLINE:
+            # решение специалиста не пересчитывается автоматически — вопросы можно задать ему в переписке
+            raise SimulationError("По заявке решение принял кредитный специалист — условия подбирает он", True)
         self.sources = assessment.enrichment(db, app.id)
         if not all(self.sources.get(s) for s in REQUIRED_SOURCES):
             raise SimulationError("Конструктор условий доступен после того, как банк оценит заявку", True)
@@ -230,7 +237,7 @@ class Simulator:
             "explanation": explanation,
             "automatic": outcome != DecisionOutcome.MANUAL_REVIEW,
             "fixable": fixable,
-            "grade": scoring.grade,
+            "grade": scoring.grade if outcome != DecisionOutcome.DECLINE else None,
             "rate": rate,
             "monthly_payment": monthly,
             "total_interest": interest,

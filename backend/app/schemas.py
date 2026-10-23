@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 
 class ORMModel(BaseModel):
@@ -51,8 +51,18 @@ def _not_blank(value: str | None) -> str | None:
 # Ограничения длины и диапазонов совпадают с колонками БД: некорректный ввод получает 422, а не 500
 MAX_AMOUNT = 10_000_000_000  # 10 млрд ₽ — заведомо больше любого продукта
 MAX_REVENUE = 1_000_000_000_000
-Money = Annotated[float, Field(ge=1, le=MAX_AMOUNT, allow_inf_nan=False)]
-Term = Annotated[int, Field(gt=0, le=120)]
+
+
+def _not_bool(value: Any) -> Any:
+    # JSON true/false не превращается в 1/0 рубль или месяц
+    if isinstance(value, bool):
+        raise ValueError("должно быть числом")
+    return value
+
+
+# Field — первым: так ограничения попадают в OpenAPI стандартными minimum/maximum
+Money = Annotated[float, Field(ge=1, le=MAX_AMOUNT, allow_inf_nan=False), BeforeValidator(_not_bool)]
+Term = Annotated[int, Field(gt=0, le=120), BeforeValidator(_not_bool)]
 Code = Annotated[str, Field(min_length=1, max_length=32)]
 
 
@@ -180,7 +190,6 @@ class ApplicationCreate(InModel):
     term_months: Term
     purpose: Code
     purpose_details: str | None = Field(default=None, max_length=2000)
-    parent_id: uuid.UUID | None = None
 
 
 # Поля, которые нельзя очистить: в БД они NOT NULL
@@ -193,7 +202,9 @@ class ApplicationUpdate(InModel):
     term_months: Term | None = None
     purpose: Code | None = None
     purpose_details: str | None = Field(default=None, max_length=2000)
-    declared_revenue: float | None = Field(default=None, ge=0, le=MAX_REVENUE, allow_inf_nan=False)
+    declared_revenue: Annotated[
+        float | None, Field(ge=0, le=MAX_REVENUE, allow_inf_nan=False), BeforeValidator(_not_bool)
+    ] = None
     has_collateral: bool | None = None
     collateral_description: str | None = Field(default=None, max_length=400)
     owner_guarantee: bool | None = None
@@ -436,7 +447,7 @@ class BankOfferIn(InModel):
     product_code: Code
     amount: Money
     term_months: Term
-    rate: float | None = Field(default=None, gt=0, lt=100, allow_inf_nan=False)
+    rate: Annotated[float | None, Field(gt=0, lt=100, allow_inf_nan=False), BeforeValidator(_not_bool)] = None
     label: str | None = Field(default=None, max_length=120)
 
 

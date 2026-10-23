@@ -168,7 +168,10 @@ def create_application(body: ApplicationCreate, db: Session = Depends(get_db), u
     return _out(db, app, member)
 
 
-def _new_application(db: Session, user: User, body: ApplicationCreate) -> tuple[Application, CompanyMember]:
+def _new_application(
+    db: Session, user: User, body: ApplicationCreate, parent: Application | None = None
+) -> tuple[Application, CompanyMember]:
+    """Новый черновик. parent — закрытая заявка, на основе которой подают повторно (только из reapply)."""
     member = require_company_member(db, user, body.company_id)
     product = db.get(Product, body.product_code)
     if product is None or not product.is_active:
@@ -177,11 +180,6 @@ def _new_application(db: Session, user: User, body: ApplicationCreate) -> tuple[
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Неизвестная цель кредита")
     company = db.get(Company, body.company_id)
     stats = assessment.company_turnover(db, company.id)
-    parent = None
-    if body.parent_id:
-        parent = db.get(Application, body.parent_id)
-        if parent is None or parent.company_id != company.id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Исходная заявка не найдена")
     app = Application(
         number=next_application_number(db),
         company_id=company.id,
@@ -438,8 +436,10 @@ def sign_consents(
     lock_key(db, f"sign:{app.id}")
     db.refresh(app)
     _require_status(app, AppStatus.DRAFT)
-    ch = _verify_challenge(db, app, user, SignPurpose.CONSENTS, body.challenge_id, body.code)
     existing = {c.consent_type for c in db.scalars(select(Consent).where(Consent.application_id == app.id))}
+    if {ConsentType.BKI_REQUEST, ConsentType.PERSONAL_DATA} <= existing:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Согласия уже подписаны")
+    ch = _verify_challenge(db, app, user, SignPurpose.CONSENTS, body.challenge_id, body.code)
     for ct in (ConsentType.BKI_REQUEST, ConsentType.PERSONAL_DATA):
         if ct not in existing:
             db.add(
@@ -469,6 +469,8 @@ def sign_consents(
 )
 def request_signature(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
     app, member = get_client_application(db, user, app_id)
+    if member.can_sign:
+        raise HTTPException(status.HTTP_409_CONFLICT, "У вас есть право подписи — подпишите сами")
     _require_status(app, AppStatus.DRAFT, AppStatus.OFFER_READY, AppStatus.SIGNING)
     what = {
         AppStatus.DRAFT: "подписать согласия и отправить заявку",
@@ -834,9 +836,21 @@ def reapply(
         term_months=c.term_months or parent.term_months,
         purpose=parent.purpose,
         purpose_details=parent.purpose_details,
-        parent_id=parent.id,
     )
-    app, member = _new_application(db, user, body)
+    if conditions is not None:
+        # условия из конструктора — в пределах продукта, иначе черновик потом не отправить
+        product = db.get(Product, body.product_code)
+        if product is not None and not float(product.min_amount) <= body.amount <= float(product.max_amount):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"Сумма по продукту «{product.name}» — от {fmt_amount(product.min_amount)} до {fmt_money(product.max_amount)}",
+            )
+        if product is not None and not product.min_term <= body.term_months <= product.max_term:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"Срок по продукту «{product.name}» — {months_range(product.min_term, product.max_term)}",
+            )
+    app, member = _new_application(db, user, body, parent)
     # условия из конструктора: залог и поручительство, если клиент их выбрал
     if c.owner_guarantee is not None:
         app.owner_guarantee = c.owner_guarantee
