@@ -71,15 +71,11 @@
       "value": ""
     },
     {
-      "key": "simProduct",
+      "key": "bankOfferRate",
       "value": ""
     },
     {
-      "key": "simAmount",
-      "value": ""
-    },
-    {
-      "key": "simTerm",
+      "key": "simRate",
       "value": ""
     },
     {
@@ -990,7 +986,7 @@
     },
     {
       "name": "2. Встречное предложение и конструктор условий — ИП Кузнецова",
-      "description": "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму. Конструктор узнаёт условия из предложения банка и подсказывает другие, при которых банк одобрит автоматически. Отказ от предложения и новая заявка на условиях подсказки — один вызов; новая заявка одобряется автоматически.",
+      "description": "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму. Конструктор узнаёт условия из предложения банка и не подсказывает срок длиннее, чем в нём. Срок из предложения с поручительством собственника — одобрение под меньшую ставку: отказ от предложения и новая заявка на этих условиях — один вызов со сверкой статуса; новая заявка одобряется автоматически.",
       "item": [
         {
           "name": "Вход: Кузнецова",
@@ -1351,7 +1347,7 @@
                   "pm.test('Два варианта', () => pm.expect(app.offers.length).to.eql(2));",
                   "const full = app.offers.find(o => o.amount === app.amount);",
                   "pm.test('Есть вариант на всю сумму', () => pm.expect(full).to.be.an('object'));",
-                  "if (full) { pm.collectionVariables.set('bankOfferId', full.id); pm.collectionVariables.set('bankOfferTerm', full.term_months); }"
+                  "if (full) { pm.collectionVariables.set('bankOfferId', full.id); pm.collectionVariables.set('bankOfferTerm', full.term_months); pm.collectionVariables.set('bankOfferRate', full.rate); }"
                 ]
               }
             }
@@ -1397,10 +1393,8 @@
                   "const s = pm.response.json();",
                   "pm.test('Тот же исход, что у заявки', () => pm.expect(s.result.outcome).to.eql('COUNTER_OFFER'));",
                   "pm.test('Нагрузка выше 40%', () => pm.expect(s.result.payment_share).to.be.above(s.result.payment_share_cap));",
-                  "const best = s.suggestions.find(x => x.result.outcome === 'APPROVE');",
-                  "pm.test('Есть подсказка с автоматическим одобрением', () => pm.expect(best).to.be.an('object'));",
-                  "pm.test('Подсказки не повторяют предложение банка', () => s.suggestions.forEach(x => pm.expect(x.result.offer).to.eql(null)));",
-                  "if (best) { pm.collectionVariables.set('simProduct', best.params.product_code); pm.collectionVariables.set('simAmount', best.params.amount); pm.collectionVariables.set('simTerm', best.params.term_months); }"
+                  "pm.test('Срок длиннее, чем в предложении банка, не подсказывается', () => pm.expect(s.suggestions.map(x => x.code)).to.not.include('term'));",
+                  "pm.test('Подсказки не повторяют предложение банка', () => s.suggestions.forEach(x => pm.expect(x.result.offer).to.eql(null)));"
                 ]
               }
             }
@@ -1500,7 +1494,170 @@
           "id": "70cd87ba-b4c5-50ab-b3c6-70a9df98aaaa"
         },
         {
-          "name": "Новая заявка на условиях подсказки вместо предложения",
+          "name": "Конструктор условий: срок из предложения и поручительство",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const s = pm.response.json();",
+                  "pm.test('Одобрим автоматически', () => pm.expect(s.result.outcome).to.eql('APPROVE'));",
+                  "pm.test('Это уже не вариант банка', () => pm.expect(s.result.offer).to.eql(null));",
+                  "pm.test('Ставка ниже, чем в предложении', () => pm.expect(s.result.rate).to.be.below(Number(pm.collectionVariables.get('bankOfferRate'))));",
+                  "pm.collectionVariables.set('simRate', s.result.rate);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/simulation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "simulation"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000000,\n  \"term_months\": \"{{bankOfferTerm}}\",\n  \"owner_guarantee\": true,\n  \"with_suggestions\": false\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "ddc933bc-6901-52dc-8b8c-84c93a0e3ed4"
+        },
+        {
+          "name": "Вариант банка новой заявкой не подаётся",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Подсказывает выбрать вариант', () => pm.expect(pm.response.json().detail).to.include('есть в предложении банка'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/reapply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "reapply"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000000,\n  \"term_months\": \"{{bankOfferTerm}}\",\n  \"replace_current\": true,\n  \"expected_status\": \"OFFER_READY\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "6ca57ef7-8756-5344-9ed0-cbe6bc740f65"
+        },
+        {
+          "name": "Замена при изменившемся статусе — 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Заявка изменилась', () => pm.expect(pm.response.json().detail).to.include('Заявка изменилась'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/reapply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "reapply"
+              ]
+            },
+            "description": "expected_status — статус, который видел клиент. Не совпал — ничего не закрывается.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000000,\n  \"term_months\": \"{{bankOfferTerm}}\",\n  \"owner_guarantee\": true,\n  \"replace_current\": true,\n  \"expected_status\": \"MANUAL_REVIEW\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "e0bb81ff-0261-5454-857a-e94b6567f98e"
+        },
+        {
+          "name": "Новая заявка вместо предложения: срок банка с поручительством",
           "event": [
             {
               "listen": "test",
@@ -1509,7 +1666,7 @@
                 "exec": [
                   "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
                   "const n = pm.response.json();",
-                  "pm.test('Черновик на условиях подсказки', () => { pm.expect(n.status).to.eql('DRAFT'); pm.expect(n.term_months).to.eql(Number(pm.collectionVariables.get('simTerm'))); });",
+                  "pm.test('Черновик на выбранных условиях', () => { pm.expect(n.status).to.eql('DRAFT'); pm.expect(n.term_months).to.eql(Number(pm.collectionVariables.get('bankOfferTerm'))); pm.expect(n.owner_guarantee).to.eql(true); });",
                   "pm.test('Связан с исходной заявкой', () => pm.expect(n.parent_id).to.eql(pm.collectionVariables.get('appId')));",
                   "pm.collectionVariables.set('parentId', pm.collectionVariables.get('appId'));",
                   "pm.collectionVariables.set('appId', n.id);"
@@ -1541,7 +1698,7 @@
             "description": "replace_current: отказ от действующего предложения и новая заявка — одной транзакцией.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"product_code\": \"{{simProduct}}\",\n  \"amount\": \"{{simAmount}}\",\n  \"term_months\": \"{{simTerm}}\",\n  \"replace_current\": true\n}"
+              "raw": "{\n  \"amount\": 1000000,\n  \"term_months\": \"{{bankOfferTerm}}\",\n  \"owner_guarantee\": true,\n  \"replace_current\": true,\n  \"expected_status\": \"OFFER_READY\"\n}"
             },
             "auth": {
               "type": "bearer",
@@ -1554,7 +1711,7 @@
               ]
             }
           },
-          "id": "378d23b7-beb7-52a6-a3c0-441e37002c1c"
+          "id": "33d88856-4a9d-5c12-9fdb-c5d28c676359"
         },
         {
           "name": "Исходная заявка закрыта отказом от предложения",
@@ -1567,7 +1724,8 @@
                   "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
                   "const old = pm.response.json();",
                   "pm.test('Отказ клиента', () => pm.expect(old.status).to.eql('CLIENT_DECLINED'));",
-                  "pm.test('Ссылка на новую заявку', () => pm.expect(old.next_application.id).to.eql(pm.collectionVariables.get('appId')));"
+                  "pm.test('Ссылка на новую заявку', () => pm.expect(old.next_application.id).to.eql(pm.collectionVariables.get('appId')));",
+                  "pm.test('В истории — новая заявка', () => pm.expect(old.events.map(e => e.event_type)).to.include('REAPPLIED'));"
                 ]
               }
             }
@@ -1599,7 +1757,7 @@
               ]
             }
           },
-          "id": "f05e7fb0-af2d-520a-816e-bf66fb460d3c"
+          "id": "6658f51f-1379-594a-a881-f6b4c34336c5"
         },
         {
           "name": "Получить код подписи согласий",
@@ -1654,7 +1812,7 @@
               ]
             }
           },
-          "id": "3a6a285c-2f0f-5ae8-bb25-25d12d868e40"
+          "id": "4d1d14c4-9d50-5a88-8209-cd40d5160c53"
         },
         {
           "name": "Подписать согласия",
@@ -1707,7 +1865,7 @@
               ]
             }
           },
-          "id": "9157f06f-dcdc-530b-9204-67ee2640a29b"
+          "id": "65a82bd9-89ea-59c0-bf11-86d3b49d4711"
         },
         {
           "name": "Отправить заявку",
@@ -1750,7 +1908,7 @@
               ]
             }
           },
-          "id": "a4e88aba-6e6f-5734-9ccf-92a70caf0738"
+          "id": "8266e303-a004-516b-93b4-b17eda19cca5"
         },
         {
           "name": "Дождаться решения по новой заявке",
@@ -1804,7 +1962,7 @@
               ]
             }
           },
-          "id": "bab89247-705d-56e6-9580-427401e2097c"
+          "id": "c854cd5c-b28c-58a5-b709-34a357ca0574"
         },
         {
           "name": "Проверить автоматическое одобрение",
@@ -1816,7 +1974,8 @@
                 "exec": [
                   "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
                   "const app = pm.response.json();",
-                  "pm.test('Одобрено, как показал конструктор', () => pm.expect(app.decision.outcome).to.eql('APPROVE'));"
+                  "pm.test('Одобрено, как показал конструктор', () => pm.expect(app.decision.outcome).to.eql('APPROVE'));",
+                  "pm.test('Ставка — как в конструкторе', () => pm.expect(app.offers[0].rate).to.eql(Number(pm.collectionVariables.get('simRate'))));"
                 ]
               }
             }
@@ -1848,7 +2007,7 @@
               ]
             }
           },
-          "id": "84ab55fb-a078-58d2-bd4a-7b2cab63a523"
+          "id": "78c05203-aa02-5ae6-a547-e0b787449da0"
         }
       ]
     },
@@ -4060,6 +4219,59 @@
           "id": "27b4f522-d5d5-58c0-9284-a48348a71b9e"
         },
         {
+          "name": "Повторно те же условия не передаются",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('Уже переданы', () => pm.expect(pm.response.json().detail).to.include('уже переданы'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/request-signature",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "request-signature"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conditions\": {\n    \"amount\": 400000,\n    \"term_months\": 12,\n    \"owner_guarantee\": true\n  }\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{employeeToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "aac02586-7b3d-540e-b608-ac8e20ea8e35"
+        },
+        {
           "name": "Руководитель видит переданные условия",
           "event": [
             {
@@ -4102,7 +4314,7 @@
               ]
             }
           },
-          "id": "813d5106-2176-582b-837b-a342807311d5"
+          "id": "c7726c5c-9f53-536f-8782-eae6f196485f"
         },
         {
           "name": "Уведомление руководителю",
@@ -4145,7 +4357,7 @@
               ]
             }
           },
-          "id": "f85c1700-5cc2-57de-9aeb-cd934e086dce"
+          "id": "1e693555-94f8-5831-996b-ec5a4286a2f1"
         }
       ]
     },

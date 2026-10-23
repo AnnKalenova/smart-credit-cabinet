@@ -4149,10 +4149,16 @@
             "description": "Залог: не указан — как требует продукт"
           },
           "owner_guarantee": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Owner Guarantee",
-            "description": "Поручительство собственника",
-            "default": false
+            "description": "Поручительство собственника (по умолчанию — нет)"
           }
         },
         "type": "object",
@@ -4602,6 +4608,23 @@
             "title": "Replace Current",
             "description": "Для заявки с предложением или на ручном рассмотрении: закрыть её (отказ от предложения или отзыв) и создать новую на этих условиях — одним действием",
             "default": false
+          },
+          "expected_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Status",
+            "description": "Статус заявки, который видел клиент. Если заявка успела измениться (например, специалист одобрил её), — 409, и ничего не закрывается",
+            "examples": [
+              "OFFER_READY"
+            ]
           }
         },
         "type": "object",

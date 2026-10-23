@@ -247,8 +247,9 @@ def build() -> dict:
         folder(
             "2. Встречное предложение и конструктор условий — ИП Кузнецова",
             "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму. "
-            "Конструктор узнаёт условия из предложения банка и подсказывает другие, при которых банк одобрит автоматически. "
-            "Отказ от предложения и новая заявка на условиях подсказки — один вызов; новая заявка одобряется автоматически.",
+            "Конструктор узнаёт условия из предложения банка и не подсказывает срок длиннее, чем в нём. "
+            "Срок из предложения с поручительством собственника — одобрение под меньшую ставку: отказ от предложения "
+            "и новая заявка на этих условиях — один вызов со сверкой статуса; новая заявка одобряется автоматически.",
             [
                 login("Кузнецова", "kuznetsova"),
                 create("EXPRESS", "EXPANSION", 1_000_000, 12),
@@ -266,7 +267,8 @@ def build() -> dict:
                         "const full = app.offers.find(o => o.amount === app.amount);",
                         "pm.test('Есть вариант на всю сумму', () => pm.expect(full).to.be.an('object'));",
                         "if (full) { pm.collectionVariables.set('bankOfferId', full.id); "
-                        "pm.collectionVariables.set('bankOfferTerm', full.term_months); }",
+                        "pm.collectionVariables.set('bankOfferTerm', full.term_months); "
+                        "pm.collectionVariables.set('bankOfferRate', full.rate); }",
                     ],
                 ),
                 request(
@@ -278,13 +280,10 @@ def build() -> dict:
                         "const s = pm.response.json();",
                         "pm.test('Тот же исход, что у заявки', () => pm.expect(s.result.outcome).to.eql('COUNTER_OFFER'));",
                         "pm.test('Нагрузка выше 40%', () => pm.expect(s.result.payment_share).to.be.above(s.result.payment_share_cap));",
-                        "const best = s.suggestions.find(x => x.result.outcome === 'APPROVE');",
-                        "pm.test('Есть подсказка с автоматическим одобрением', () => pm.expect(best).to.be.an('object'));",
+                        "pm.test('Срок длиннее, чем в предложении банка, не подсказывается', () => "
+                        "pm.expect(s.suggestions.map(x => x.code)).to.not.include('term'));",
                         "pm.test('Подсказки не повторяют предложение банка', () => "
                         "s.suggestions.forEach(x => pm.expect(x.result.offer).to.eql(null)));",
-                        "if (best) { pm.collectionVariables.set('simProduct', best.params.product_code); "
-                        "pm.collectionVariables.set('simAmount', best.params.amount); "
-                        "pm.collectionVariables.set('simTerm', best.params.term_months); }",
                     ],
                     description="Решение банка при текущих условиях заявки и подсказки, что изменить. Ничего не сохраняет.",
                 ),
@@ -302,20 +301,74 @@ def build() -> dict:
                     description="Условия совпадают с вариантом банка: его выбирают в предложении, новая заявка не нужна.",
                 ),
                 request(
-                    "Новая заявка на условиях подсказки вместо предложения",
+                    "Конструктор условий: срок из предложения и поручительство",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/simulation",
+                    body={
+                        "amount": 1000000,
+                        "term_months": "{{bankOfferTerm}}",
+                        "owner_guarantee": True,
+                        "with_suggestions": False,
+                    },
+                    tests=[
+                        "const s = pm.response.json();",
+                        "pm.test('Одобрим автоматически', () => pm.expect(s.result.outcome).to.eql('APPROVE'));",
+                        "pm.test('Это уже не вариант банка', () => pm.expect(s.result.offer).to.eql(null));",
+                        "pm.test('Ставка ниже, чем в предложении', () => "
+                        "pm.expect(s.result.rate).to.be.below(Number(pm.collectionVariables.get('bankOfferRate'))));",
+                        "pm.collectionVariables.set('simRate', s.result.rate);",
+                    ],
+                ),
+                request(
+                    "Вариант банка новой заявкой не подаётся",
                     "POST",
                     "/api/v1/applications/{{appId}}/reapply",
                     body={
-                        "product_code": "{{simProduct}}",
-                        "amount": "{{simAmount}}",
-                        "term_months": "{{simTerm}}",
+                        "amount": 1000000,
+                        "term_months": "{{bankOfferTerm}}",
                         "replace_current": True,
+                        "expected_status": "OFFER_READY",
+                    },
+                    expect=409,
+                    tests=[
+                        "pm.test('Подсказывает выбрать вариант', () => "
+                        "pm.expect(pm.response.json().detail).to.include('есть в предложении банка'));",
+                    ],
+                ),
+                request(
+                    "Замена при изменившемся статусе — 409",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/reapply",
+                    body={
+                        "amount": 1000000,
+                        "term_months": "{{bankOfferTerm}}",
+                        "owner_guarantee": True,
+                        "replace_current": True,
+                        "expected_status": "MANUAL_REVIEW",
+                    },
+                    expect=409,
+                    tests=[
+                        "pm.test('Заявка изменилась', () => pm.expect(pm.response.json().detail).to.include('Заявка изменилась'));",
+                    ],
+                    description="expected_status — статус, который видел клиент. Не совпал — ничего не закрывается.",
+                ),
+                request(
+                    "Новая заявка вместо предложения: срок банка с поручительством",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/reapply",
+                    body={
+                        "amount": 1000000,
+                        "term_months": "{{bankOfferTerm}}",
+                        "owner_guarantee": True,
+                        "replace_current": True,
+                        "expected_status": "OFFER_READY",
                     },
                     expect=201,
                     tests=[
                         "const n = pm.response.json();",
-                        "pm.test('Черновик на условиях подсказки', () => { pm.expect(n.status).to.eql('DRAFT'); "
-                        "pm.expect(n.term_months).to.eql(Number(pm.collectionVariables.get('simTerm'))); });",
+                        "pm.test('Черновик на выбранных условиях', () => { pm.expect(n.status).to.eql('DRAFT'); "
+                        "pm.expect(n.term_months).to.eql(Number(pm.collectionVariables.get('bankOfferTerm'))); "
+                        "pm.expect(n.owner_guarantee).to.eql(true); });",
                         "pm.test('Связан с исходной заявкой', () => pm.expect(n.parent_id).to.eql(pm.collectionVariables.get('appId')));",
                         "pm.collectionVariables.set('parentId', pm.collectionVariables.get('appId'));",
                         "pm.collectionVariables.set('appId', n.id);",
@@ -331,6 +384,8 @@ def build() -> dict:
                         "pm.test('Отказ клиента', () => pm.expect(old.status).to.eql('CLIENT_DECLINED'));",
                         "pm.test('Ссылка на новую заявку', () => "
                         "pm.expect(old.next_application.id).to.eql(pm.collectionVariables.get('appId')));",
+                        "pm.test('В истории — новая заявка', () => "
+                        "pm.expect(old.events.map(e => e.event_type)).to.include('REAPPLIED'));",
                     ],
                 ),
                 consents(),
@@ -343,6 +398,8 @@ def build() -> dict:
                     tests=[
                         "const app = pm.response.json();",
                         "pm.test('Одобрено, как показал конструктор', () => pm.expect(app.decision.outcome).to.eql('APPROVE'));",
+                        "pm.test('Ставка — как в конструкторе', () => "
+                        "pm.expect(app.offers[0].rate).to.eql(Number(pm.collectionVariables.get('simRate'))));",
                     ],
                 ),
             ],
@@ -473,6 +530,17 @@ def build() -> dict:
                     ],
                 ),
                 request(
+                    "Повторно те же условия не передаются",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/request-signature",
+                    token="employeeToken",
+                    body={"conditions": {"amount": 400000, "term_months": 12, "owner_guarantee": True}},
+                    expect=409,
+                    tests=[
+                        "pm.test('Уже переданы', () => pm.expect(pm.response.json().detail).to.include('уже переданы'));",
+                    ],
+                ),
+                request(
                     "Руководитель видит переданные условия",
                     "GET",
                     "/api/v1/applications/{{appId}}",
@@ -553,9 +621,8 @@ def build() -> dict:
             {"key": "recTerm", "value": ""},
             {"key": "bankOfferId", "value": ""},
             {"key": "bankOfferTerm", "value": ""},
-            {"key": "simProduct", "value": ""},
-            {"key": "simAmount", "value": ""},
-            {"key": "simTerm", "value": ""},
+            {"key": "bankOfferRate", "value": ""},
+            {"key": "simRate", "value": ""},
             {"key": "parentId", "value": ""},
         ],
         "item": folders,

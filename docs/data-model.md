@@ -145,7 +145,7 @@ erDiagram
 | `info_requests` | запросы банка и ответы клиента внутри заявки | `items`, `status`, `answer_comment` |
 | `messages` | переписка клиента и банка по заявке | `author_role`, `text` |
 | `loans` | выданные кредиты с графиком платежей | `contract_number`, `loan_account`, `schedule` |
-| `application_events` | журнал аудита всех действий; в том числе условия, которые сотрудник без права подписи передал руководителю (`CONDITIONS_PROPOSED`, условия — в `payload`) | `event_type`, `from_status`, `to_status`, `actor_type`, `client_visible`, `payload` |
+| `application_events` | журнал аудита всех действий; в том числе условия, которые сотрудник без права подписи передал руководителю (`CONDITIONS_PROPOSED`, условия — в `payload`), и ссылка на новую заявку, поданную на основе этой (`REAPPLIED`) | `event_type`, `from_status`, `to_status`, `actor_type`, `client_visible`, `payload` |
 | `notifications` | уведомления в кабинете (вместо SMS и почты) | `user_id`, `is_read` |
 | `login_attempts` | попытки входа: защита от подбора пароля и журнал входов; индексы по логину и по адресу | `login`, `success`, `ip`, `created_at` |
 | `pipeline_jobs` | очередь этапов конвейера для воркеров | `stage`, `status`, `attempts`, `run_after`, `locked_by` |
