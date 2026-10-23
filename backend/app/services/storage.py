@@ -1,10 +1,14 @@
-"""Хранилище документов. В прототипе — том Docker; в промышленной версии — S3-совместимое хранилище."""
+"""Хранилище документов. На стенде — том Docker; в промышленной эксплуатации — S3-совместимое хранилище."""
 
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 import uuid
 from pathlib import Path
+
+from fastapi import HTTPException, status
+from fastapi.responses import FileResponse
 
 from app.config import get_settings
 
@@ -42,11 +46,12 @@ class StorageError(Exception):
 
 
 def resolve_type(file_name: str, content_type: str | None) -> str:
-    """Тип файла: из заголовка запроса, а если браузер прислал общий тип — по расширению имени."""
-    if content_type in ALLOWED_TYPES:
-        return content_type
+    """Тип файла: по расширению имени (браузеры и ОС подписывают один формат по-разному), иначе — из
+    заголовка запроса. Содержимое затем сверяется с типом по сигнатуре."""
     ext = Path(file_name or "").suffix.lower()
-    return EXTENSION_TYPES.get(ext, content_type or "application/octet-stream")
+    if ext in EXTENSION_TYPES:
+        return EXTENSION_TYPES[ext]
+    return content_type or "application/octet-stream"
 
 
 def content_matches(content: bytes, content_type: str) -> bool:
@@ -78,21 +83,41 @@ def save(application_id: uuid.UUID, content: bytes, content_type: str) -> tuple[
     return key, hashlib.sha256(content).hexdigest()
 
 
+def safe_file_name(file_name: str, content_type: str) -> str:
+    """Имя файла для хранения и скачивания. Управляющие и «невидимые» символы (в том числе разворот
+    текста справа налево) удаляются, расширение берётся из проверенного типа: «Счёт.hta», присланный как
+    текст, скачается как «Счёт.hta.txt» и не запустится двойным щелчком."""
+    name = "".join(ch for ch in (file_name or "") if unicodedata.category(ch)[0] != "C")
+    name = name.replace("/", "_").replace("\\", "_").strip(" .")
+    ext = ALLOWED_TYPES.get(content_type, "")
+    stem, dot, suffix = name.rpartition(".")
+    if dot and "." + suffix.lower() == ext:
+        name = stem.strip(" .")
+    elif dot and "." + suffix.lower() == ".jpeg" and ext == ".jpg":
+        name, ext = stem.strip(" .") or "document", ".jpeg"
+    name = (name or "document")[: 255 - len(ext)]
+    return name + ext
+
+
+def exists(key: str) -> bool:
+    try:
+        return path_for(key).is_file()
+    except StorageError:
+        return False
+
+
+def file_response(doc) -> FileResponse:
+    """Ответ со скачиванием документа. Если файла нет в хранилище — понятная ошибка 404, а не 500."""
+    if not exists(doc.storage_key):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Файл не найден в хранилище")
+    return FileResponse(path_for(doc.storage_key), media_type=doc.content_type, filename=doc.file_name)
+
+
 def path_for(key: str) -> Path:
     path = (_root() / key).resolve()
     if _root().resolve() not in path.parents:
         raise StorageError("Недопустимый путь")
     return path
-
-
-def copy(key: str, application_id: uuid.UUID) -> str:
-    """Копия файла для новой заявки: у каждой заявки свои файлы, удаление в одной не затрагивает другую."""
-    src = path_for(key)
-    new_key = f"{application_id}/{uuid.uuid4().hex}{src.suffix}"
-    dst = _root() / new_key
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(src.read_bytes())
-    return new_key
 
 
 def delete(key: str) -> None:
@@ -103,12 +128,12 @@ def delete(key: str) -> None:
 
 
 def demo_document(doc_type_label: str, company_name: str, inn: str) -> bytes:
-    """Синтетический документ для демонстрации, если под рукой нет подходящего файла."""
+    """Пример документа для демо-стенда, если под рукой нет подходящего файла."""
     text = (
-        f"СИНТЕТИЧЕСКИЙ ДОКУМЕНТ ДЛЯ ДЕМОНСТРАЦИИ\n\n"
+        "ПРИМЕР ДОКУМЕНТА\n\n"
         f"Тип: {doc_type_label}\n"
         f"Компания: {company_name}\n"
         f"ИНН: {inn}\n\n"
-        "Документ сформирован прототипом «Умный кредитный кабинет» и не содержит реальных данных.\n"
+        "Сформирован на демо-стенде «Умного кредитного кабинета» и не содержит реальных данных.\n"
     )
     return text.encode("utf-8")

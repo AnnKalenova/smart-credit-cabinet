@@ -28,7 +28,8 @@ from app.domain.enums import (
 from app.domain.finance import add_months, build_annuity_schedule, build_revolving_schedule, money
 from app.domain.policy import POLICY_VERSION, OfferDraft, PolicyResult, evaluate
 from app.domain.scoring import MODEL_VERSION, score
-from app.integrations.client import SERVICE_TITLES, ExternalSystems
+from app.domain.text import fmt_money, lower_first
+from app.integrations.client import SERVICE_FROM, SERVICE_TITLES, ExternalSystems
 from app.models import (
     Application,
     CheckResult,
@@ -42,6 +43,7 @@ from app.models import (
     ScoringResult,
 )
 from app.services import assessment
+from app.services.views import schedule_start
 from app.services.workflow import add_event, enqueue, key_rate, local_today, transition, utcnow
 
 log = logging.getLogger("pipeline")
@@ -94,8 +96,8 @@ def stage_precheck(db: Session, app: Application, job: PipelineJob) -> None:
         db,
         app,
         AppStatus.ENRICHMENT,
-        title="Данные проверены, собираем сведения о компании",
-        stage_detail="Запрашиваем выписку из ЕГРЮЛ",
+        title="Данные проверены, собираем сведения для оценки",
+        stage_detail="Запрашиваем выписку из ЕГРИП" if app.company.kind == "IP" else "Запрашиваем выписку из ЕГРЮЛ",
     )
     enqueue(db, app, JobStage.ENRICHMENT)
 
@@ -128,9 +130,10 @@ def stage_enrichment(db: Session, app: Application, job: PipelineJob) -> None:
         .order_by(Consent.signed_at.desc())
     )
     inn = app.company.inn
+    registry = "ЕГРИП" if app.company.kind == "IP" else "ЕГРЮЛ"
     with ExternalSystems(application_id=app.id, attempt=job.attempts) as ext:
         steps = [
-            ("EGRUL", "Запрашиваем выписку из ЕГРЮЛ", lambda: ext.egrul(inn)),
+            ("EGRUL", f"Запрашиваем выписку из {registry}", lambda: ext.egrul(inn)),
             ("FNS", "Проверяем компанию в сервисе ФНС «Прозрачный бизнес»", lambda: ext.fns(inn)),
             ("BKI", "Запрашиваем кредитную историю в БКИ", lambda: ext.bki(inn, str(consent.id) if consent else "")),
         ]
@@ -180,7 +183,8 @@ def on_enrichment_failed(db: Session, app: Application, error: Exception) -> Non
     if app.status != AppStatus.ENRICHMENT:
         return
     service = getattr(error, "service", "")
-    title = SERVICE_TITLES.get(service, "внешний сервис")
+    source = SERVICE_FROM.get(service, "из внешнего источника")
+    reason = getattr(error, "reason", str(error))
     decision = Decision(
         application_id=app.id,
         kind=DecisionKind.AUTO,
@@ -189,7 +193,7 @@ def on_enrichment_failed(db: Session, app: Application, error: Exception) -> Non
             {
                 "code": "integration_unavailable",
                 "kind": "MANUAL",
-                "text": f"Не удалось получить данные: {title} ({error})",
+                "text": f"Не удалось получить данные {source}: {reason}",
                 "client_text": "Один из внешних источников данных временно недоступен — заявку проверит специалист",
             }
         ],
@@ -215,7 +219,9 @@ def stage_scoring(db: Session, app: Application, job: PipelineJob) -> None:
         return
     sources = assessment.enrichment(db, app.id)
     stats = assessment.company_turnover(db, app.company_id)
-    inp = assessment.build_scoring_input(app, stats, sources, key_rate(db), local_today())
+    inp = assessment.build_scoring_input(
+        app, stats, sources, key_rate(db), local_today(), assessment.own_obligations(db, app.company_id, app.id)
+    )
     outcome = score(inp)
     db.add(
         ScoringResult(
@@ -322,7 +328,7 @@ def apply_policy_result(db: Session, app: Application, result: PolicyResult) -> 
     else:
         app.decided_at = utcnow()
         reason = next((r.client_text for r in result.reasons if r.kind == "STOP"), "")
-        transition(db, app, AppStatus.DECLINED, title=f"Отказ: {reason}" if reason else "Отказ")
+        transition(db, app, AppStatus.DECLINED, title=f"Отказ: {lower_first(reason)}" if reason else "Отказ")
     return decision
 
 
@@ -364,7 +370,7 @@ def stage_disbursement(db: Session, app: Application, job: PipelineJob) -> None:
             }
         )
     issued_at = utcnow()
-    start = local_today()
+    start = schedule_start(offer)  # дата подписания: график кредита совпадает с подписанным
     if offer.product.repayment_type == "REVOLVING":
         schedule = build_revolving_schedule(float(offer.amount), float(offer.rate), offer.term_months, start)
     else:
@@ -387,11 +393,11 @@ def stage_disbursement(db: Session, app: Application, job: PipelineJob) -> None:
         )
     )
     app.issued_at = issued_at
-    amount = f"{float(offer.amount):,.0f}".replace(",", " ")
+    amount = fmt_money(offer.amount)
     title = (
-        f"Лимит овердрафта {amount} ₽ установлен на счёт {app.company.settlement_account}"
+        f"Лимит овердрафта {amount} установлен на счёт {app.company.settlement_account}"
         if offer.product.repayment_type == "REVOLVING"
-        else f"{amount} ₽ зачислены на счёт {app.company.settlement_account}"
+        else f"{amount} зачислены на счёт {app.company.settlement_account}"
     )
     transition(
         db,
@@ -410,8 +416,29 @@ HANDLERS = {
     JobStage.DISBURSEMENT: stage_disbursement,
 }
 
+
+def on_disbursement_failed(db: Session, app: Application, error: Exception) -> None:
+    """Выдача не прошла после всех попыток (например, АБС долго недоступна). Заявка остаётся на выдаче:
+    договор подписан, отменить его нельзя. Специалист видит её в очереди и повторяет выдачу,
+    когда АБС снова доступна; запрос в АБС идемпотентен, второго кредита не будет."""
+    if app.status != AppStatus.DISBURSEMENT:
+        return
+    service = getattr(error, "service", "")
+    title = SERVICE_TITLES.get(service, "учётная система банка")
+    app.stage_detail = "Выдача задерживается — специалист банка повторит её"
+    add_event(
+        db,
+        app,
+        "DISBURSEMENT_FAILED",
+        f"Выдача не прошла: {lower_first(title)} не ответила после всех попыток. Нужен повтор выдачи",
+        payload={"error": str(error)[:300], "service": service},
+        client_visible=False,
+    )
+
+
 FAILURE_HANDLERS = {
     JobStage.ENRICHMENT: on_enrichment_failed,
+    JobStage.DISBURSEMENT: on_disbursement_failed,
 }
 
 

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.config import get_settings
 from app.db import SessionLocal
@@ -83,19 +84,32 @@ def process_job(job_id: int) -> None:
             )
         except Exception as e:  # noqa: BLE001 — любая ошибка этапа обрабатывается одинаково
             db.rollback()
-            _on_error(db, job_id, e)
+            # Заявку могли параллельно изменить (клиент отозвал, специалист взял в работу), пока этап ждал
+            # ответа внешней системы: тогда сохранение ошибки повторяется на свежих данных
+            for attempt in range(3):
+                try:
+                    _on_error(db, job_id, e)
+                    return
+                except StaleDataError:
+                    db.rollback()
+                    db.expire_all()
+                    log.info("заявка изменилась при обработке ошибки этапа, повторяем", extra={"job_id": job_id})
+                    time.sleep(0.05 * (attempt + 1))
+            log.error("не удалось сохранить ошибку этапа, этап вернётся в очередь", extra={"job_id": job_id})
 
 
 def _on_error(db: Session, job_id: int, error: Exception) -> None:
     job = db.get(PipelineJob, job_id)
     app = db.get(Application, job.application_id)
+    db.refresh(app)  # свежая версия заявки: оптимистичная блокировка сравнивает именно её
     retryable = getattr(error, "retryable", True)
     job.last_error = str(error)[:500]
     if retryable and job.attempts < job.max_attempts:
         delay = backoff_seconds(job.attempts)
         job.status = JobStatus.PENDING
         job.run_after = utcnow() + timedelta(seconds=delay)
-        if isinstance(error, IntegrationError):
+        if isinstance(error, IntegrationError) and app.status == job.stage:
+            # подсказка клиенту — только пока заявка на этом этапе (её могли уже отозвать)
             title = SERVICE_TITLES.get(error.service, error.service)
             app.stage_detail = (
                 f"{title} временно не отвечает — повторим запрос через {delay:.0f} с "
@@ -184,7 +198,11 @@ def run() -> None:
         if job_id is None:
             time.sleep(settings.worker_poll_interval_seconds)
             continue
-        process_job(job_id)
+        try:
+            process_job(job_id)
+        except Exception:  # noqa: BLE001 — воркер не должен останавливаться из-за одной заявки
+            # этап остаётся RUNNING и через 5 минут вернётся в очередь (housekeeping)
+            log.exception("необработанная ошибка этапа", extra={"job_id": job_id})
     log.info("воркер остановлен")
 
 

@@ -73,9 +73,15 @@ def key_rate(db: Session) -> float:
     return float(get_setting(db, "key_rate"))
 
 
+def lock_key(db: Session, key: str) -> None:
+    """Транзакционная advisory-блокировка PostgreSQL: запросы с одним ключом выполняются по очереди.
+    Снимается при commit или rollback."""
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": key})
+
+
 def next_application_number(db: Session) -> str:
     seq = db.execute(text("SELECT nextval('application_number_seq')")).scalar_one()
-    return f"{utcnow().year}-{seq:06d}"
+    return f"{local_today().year}-{seq:06d}"  # год по местному времени: в ночь на 1 января не ошибается
 
 
 def add_event(
@@ -148,7 +154,9 @@ def transition(
         from_status=from_status,
         to_status=to_status,
     )
-    if AppStatus(to_status) in NOTIFY_STATUSES:
+    # действие самого клиента (принял предложение, вернулся к выбору) не дублируем уведомлением:
+    # заголовок «готово предложение» в таком уведомлении читался бы как новое предложение банка
+    if AppStatus(to_status) in NOTIFY_STATUSES and actor_type != ActorType.CLIENT:
         notify_company(
             db, app, f"Заявка № {app.number}: {client_title.lower()}", title or CLIENT_STATUS[AppStatus(to_status)][2]
         )

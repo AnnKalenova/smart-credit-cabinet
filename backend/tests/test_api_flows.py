@@ -237,7 +237,12 @@ def test_analyst_requests_info_then_declines(login):
     )
     app = c.get(app["id"])
     assert app["status"] == "DECLINED"
-    assert "Сейчас не можем одобрить кредит" in app["decision"]["reasons"]
+    # причина — в объяснении решения, сообщение специалиста — отдельно, без повтора
+    assert app["decision"]["reasons"] == ["Налоговый долг и смена директора"]
+    assert app["decision"]["message"] == "Сейчас не можем одобрить кредит"
+    # при отказе не показываем рейтинг и сильные стороны
+    assert app["decision"]["grade"] is None and app["decision"]["positives"] == []
+    assert app["events"][-1]["title"] == "Отказ: налоговый долг и смена директора"
     a.call("POST", _bank(app, "/decision"), json={"action": "DECLINE", "reason": "повтор"}, expect=409)
 
 

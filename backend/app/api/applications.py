@@ -6,8 +6,8 @@ import uuid
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -18,6 +18,7 @@ from app.domain.enums import (
     DOC_TYPES,
     POSITION_LABELS,
     PURPOSES,
+    TERMINAL_STATUSES,
     ActorType,
     AppStatus,
     ConsentType,
@@ -29,6 +30,7 @@ from app.domain.enums import (
 )
 from app.domain.products import pledged, required_documents
 from app.domain.statuses import CLIENT_CANCELLABLE, CLIENT_STATUS
+from app.domain.text import fmt_amount, fmt_money, fmt_rate, months_range
 from app.models import (
     Application,
     ApplicationDocument,
@@ -36,6 +38,7 @@ from app.models import (
     CompanyMember,
     Consent,
     InfoRequest,
+    Loan,
     Message,
     Offer,
     Product,
@@ -47,6 +50,7 @@ from app.schemas import (
     ApplicationOut,
     ApplicationSummaryOut,
     ApplicationUpdate,
+    ConditionsIn,
     ContractOut,
     DocumentOut,
     InfoResponseIn,
@@ -55,9 +59,12 @@ from app.schemas import (
     SignChallengeIn,
     SignChallengeOut,
     SignConfirmIn,
+    SimulationIn,
+    SimulationOut,
 )
 from app.security import get_client_application, hash_code, require_company_member, require_roles
 from app.services import assessment, storage
+from app.services.simulation import Params, SimulationError, Simulator
 from app.services.views import (
     application_out,
     can_cancel,
@@ -68,7 +75,15 @@ from app.services.views import (
     schedule_for,
     summary_out,
 )
-from app.services.workflow import add_event, enqueue, next_application_number, notify_company, transition, utcnow
+from app.services.workflow import (
+    add_event,
+    enqueue,
+    lock_key,
+    next_application_number,
+    notify_company,
+    transition,
+    utcnow,
+)
 
 router = APIRouter(prefix="/api/v1/applications", tags=["Клиент: заявка"])
 settings = get_settings()
@@ -88,6 +103,7 @@ EDITABLE_FIELDS = {
     "contact_phone",
 }
 SIGN_CODES_PER_10_MIN = 10
+MAX_DOCUMENTS_PER_APPLICATION = 20
 INFO_EDITABLE_FIELDS = {
     "declared_revenue",
     "collateral_description",
@@ -100,7 +116,8 @@ INFO_EDITABLE_FIELDS = {
 def _commit(db: Session) -> None:
     try:
         db.commit()
-    except StaleDataError as e:
+    except (StaleDataError, IntegrityError) as e:
+        # параллельный запрос успел изменить заявку (или уже выполнил то же действие)
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Заявка изменилась, обновите страницу") from e
 
@@ -228,6 +245,15 @@ def _save_document(
 ):
     if doc_type not in DOC_TYPES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Неизвестный тип документа")
+    lock_key(db, f"documents:{app.id}")  # лимит документов не обходится параллельными загрузками
+    count = db.scalar(
+        select(func.count()).select_from(ApplicationDocument).where(ApplicationDocument.application_id == app.id)
+    )
+    if count >= MAX_DOCUMENTS_PER_APPLICATION:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"К заявке можно приложить не больше {MAX_DOCUMENTS_PER_APPLICATION} файлов. Удалите лишние",
+        )
     try:
         key, sha = storage.save(app.id, content, content_type)
     except storage.StorageError as e:
@@ -235,7 +261,7 @@ def _save_document(
     doc = ApplicationDocument(
         application_id=app.id,
         doc_type=doc_type,
-        file_name=file_name[:255],
+        file_name=storage.safe_file_name(file_name, content_type),
         content_type=content_type,
         size_bytes=len(content),
         sha256=sha,
@@ -279,16 +305,18 @@ async def upload_document(
     "/{app_id}/documents/demo",
     response_model=DocumentOut,
     status_code=201,
-    summary="Приложить синтетический демо-документ",
+    summary="Приложить пример документа (только на демо-стенде)",
 )
 def demo_document(app_id: uuid.UUID, doc_type: str, db: Session = Depends(get_db), user: User = Depends(client_only)):
+    if not settings.demo_mode:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Недоступно")
     app, _ = get_client_application(db, user, app_id)
     _require_status(app, AppStatus.DRAFT, AppStatus.NEEDS_INFO)
     label = DOC_TYPES.get(doc_type)
     if label is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Неизвестный тип документа")
     content = storage.demo_document(label, app.company.short_name, app.company.inn)
-    doc = _save_document(db, app, user, doc_type, f"{label} (демо).txt", content, "text/plain")
+    doc = _save_document(db, app, user, doc_type, f"{label} (пример).txt", content, "text/plain")
     return document_out(doc)
 
 
@@ -300,7 +328,7 @@ def download_document(
     doc = db.get(ApplicationDocument, doc_id)
     if doc is None or doc.application_id != app.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Документ не найден")
-    return FileResponse(storage.path_for(doc.storage_key), media_type=doc.content_type, filename=doc.file_name)
+    return storage.file_response(doc)
 
 
 @router.delete("/{app_id}/documents/{doc_id}", status_code=204, summary="Удалить документ")
@@ -312,7 +340,7 @@ def delete_document(
     doc = db.get(ApplicationDocument, doc_id)
     if doc is None or doc.application_id != app.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Документ не найден")
-    storage.delete(doc.storage_key)
+    key = doc.storage_key
     add_event(
         db,
         app,
@@ -324,6 +352,10 @@ def delete_document(
     )
     db.delete(doc)
     _commit(db)
+    # файл удаляется после фиксации в БД и только если на него не ссылается другая заявка (перенос при повторной подаче)
+    still_used = db.scalar(select(ApplicationDocument.id).where(ApplicationDocument.storage_key == key).limit(1))
+    if still_used is None:
+        storage.delete(key)
 
 
 # --------------------------------------------------------------------------- подпись (простая ЭП кодом внутри продукта)
@@ -332,7 +364,7 @@ def delete_document(
 def _verify_challenge(
     db: Session, app: Application, user: User, purpose: str, challenge_id: uuid.UUID, code: str
 ) -> SignChallenge:
-    ch = db.get(SignChallenge, challenge_id)
+    ch = db.get(SignChallenge, challenge_id, with_for_update=True)
     if ch is None or ch.application_id != app.id or ch.user_id != user.id or ch.purpose != purpose:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Код подтверждения не найден, запросите новый")
     if ch.used_at is not None:
@@ -355,6 +387,7 @@ def create_sign_challenge(
 ):
     app, member = get_client_application(db, user, app_id)
     _require_signer(member)
+    lock_key(db, f"sign:{app.id}")  # лимит кодов и попыток не обходится параллельными запросами
     recent = db.scalar(
         select(func.count())
         .select_from(SignChallenge)
@@ -402,6 +435,8 @@ def sign_consents(
 ):
     app, member = get_client_application(db, user, app_id)
     _require_signer(member)
+    lock_key(db, f"sign:{app.id}")
+    db.refresh(app)
     _require_status(app, AppStatus.DRAFT)
     ch = _verify_challenge(db, app, user, SignPurpose.CONSENTS, body.challenge_id, body.code)
     existing = {c.consent_type for c in db.scalars(select(Consent).where(Consent.application_id == app.id))}
@@ -462,18 +497,23 @@ def request_signature(app_id: uuid.UUID, db: Session = Depends(get_db), user: Us
 # --------------------------------------------------------------------------- отправка
 
 
-def submit_problems(db: Session, app: Application) -> list[str]:
+def terms_problems(app: Application) -> list[str]:
+    """Сумма, срок и цель — в пределах условий продукта."""
     p = app.product
     problems = []
-    amount = float(app.amount)
-    if not float(p.min_amount) <= amount <= float(p.max_amount):
-        problems.append(
-            f"Сумма должна быть от {float(p.min_amount):,.0f} до {float(p.max_amount):,.0f} ₽".replace(",", " ")
-        )
+    if not float(p.min_amount) <= float(app.amount) <= float(p.max_amount):
+        problems.append(f"Сумма должна быть от {fmt_amount(p.min_amount)} до {fmt_money(p.max_amount)}")
     if not p.min_term <= app.term_months <= p.max_term:
-        problems.append(f"Срок должен быть от {p.min_term} до {p.max_term} мес.")
+        problems.append(f"Срок по продукту — {months_range(p.min_term, p.max_term)}")
     if app.purpose not in p.purposes:
         problems.append("Цель не подходит для выбранного продукта")
+    return problems
+
+
+def submit_problems(db: Session, app: Application) -> list[str]:
+    p = app.product
+    amount = float(app.amount)
+    problems = terms_problems(app)
     if not app.declared_revenue:
         problems.append("Укажите выручку за последние 12 месяцев")
     if not (app.contact_name and app.contact_phone):
@@ -539,7 +579,8 @@ def info_response(
                 setattr(app, key, value)
     # запрошенный документ засчитывается, только если его приложили после запроса банка
     have_new = {d.doc_type for d in app.documents if d.uploaded_at >= req.created_at}
-    problems = []
+    # сумма и срок — в пределах продукта, иначе проверка снова вернёт тот же запрос
+    problems = terms_problems(app)
     for item in req.items:
         if item["type"] == "DOCUMENT" and item["doc_type"] not in have_new:
             problems.append(f"Приложите: {item['label']}")
@@ -556,7 +597,9 @@ def info_response(
     req.answer_comment = body.comment
     if body.comment:
         db.add(Message(application_id=app.id, author_id=user.id, author_role=Role.CLIENT, text=body.comment))
-    add_event(db, app, "INFO_PROVIDED", "Вы ответили на запрос банка", actor_type=ActorType.CLIENT, actor_id=user.id)
+    add_event(
+        db, app, "INFO_PROVIDED", "Ответ на запрос банка отправлен", actor_type=ActorType.CLIENT, actor_id=user.id
+    )
     transition(db, app, AppStatus.PRECHECK, title="Заявка снова в работе", stage_detail="Проверяем новые данные")
     enqueue(db, app, JobStage.PRECHECK)
     _commit(db)
@@ -599,15 +642,13 @@ def accept_offer(
         o.status = OfferStatus.SUPERSEDED
     offer.status = OfferStatus.ACCEPTED
     offer.accepted_at = utcnow()
-    amount = f"{float(offer.amount):,.0f}".replace(",", "\u00a0")
-    rate = f"{float(offer.rate):.1f}".replace(".", ",")
     transition(
         db,
         app,
         AppStatus.SIGNING,
         actor_type=ActorType.CLIENT,
         actor_id=user.id,
-        title=f"Выбрано предложение: {amount}\u00a0₽ на {offer.term_months} мес. под {rate}%",
+        title=f"Выбрано предложение: {fmt_money(offer.amount)} на {offer.term_months} мес. под {fmt_rate(offer.rate)}",
     )
     _commit(db)
     return _out(db, app, member)
@@ -618,7 +659,15 @@ def decline_offers(app_id: uuid.UUID, db: Session = Depends(get_db), user: User 
     app, member = get_client_application(db, user, app_id)
     _require_signer(member, "Отказаться от предложения", hint=False)
     _require_status(app, AppStatus.OFFER_READY)
-    for o in db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE)):
+    active = list(db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE)))
+    if active and all(o.valid_until < utcnow() for o in active):
+        # так же, как при попытке принять: истёкшее предложение закрывается как истёкшее
+        for o in active:
+            o.status = OfferStatus.EXPIRED
+        transition(db, app, AppStatus.EXPIRED, title="Срок действия предложения истёк")
+        _commit(db)
+        raise HTTPException(status.HTTP_409_CONFLICT, "Срок действия предложения уже истёк")
+    for o in active:
         o.status = OfferStatus.DECLINED
     transition(
         db,
@@ -626,7 +675,7 @@ def decline_offers(app_id: uuid.UUID, db: Session = Depends(get_db), user: User 
         AppStatus.CLIENT_DECLINED,
         actor_type=ActorType.CLIENT,
         actor_id=user.id,
-        title="Вы отказались от предложения",
+        title="Отказ от предложения",
     )
     _commit(db)
     return _out(db, app, member)
@@ -663,7 +712,7 @@ def back_to_offers(app_id: uuid.UUID, db: Session = Depends(get_db), user: User 
         AppStatus.OFFER_READY,
         actor_type=ActorType.CLIENT,
         actor_id=user.id,
-        title="Вы вернулись к выбору условий",
+        title="Возврат к выбору условий",
     )
     _commit(db)
     return _out(db, app, member)
@@ -677,6 +726,7 @@ def contract(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depe
     signer = db.scalar(
         select(CompanyMember).where(CompanyMember.company_id == app.company_id, CompanyMember.can_sign.is_(True))
     )
+    loan = db.scalar(select(Loan).where(Loan.application_id == app.id))
     c = app.company
     return {
         "contract_number": f"КД-{app.number}",
@@ -689,7 +739,7 @@ def contract(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depe
             "settlement_account": c.settlement_account,
         },
         "offer": offer_out(offer),
-        "schedule": schedule_for(offer),
+        "schedule": loan.schedule if loan else schedule_for(offer),
         "documents": [
             {"code": "contract", "title": f"Кредитный договор № КД-{app.number}"},
             {"code": "schedule", "title": "График платежей (приложение 1 к договору)"},
@@ -707,6 +757,8 @@ def sign_contract(
 ):
     app, member = get_client_application(db, user, app_id)
     _require_signer(member)
+    lock_key(db, f"sign:{app.id}")
+    db.refresh(app)
     _require_status(app, AppStatus.SIGNING)
     offer = db.scalar(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACCEPTED))
     if offer is None or offer.valid_until < utcnow():
@@ -719,6 +771,7 @@ def sign_contract(
             status.HTTP_409_CONFLICT, "Срок действия предложения истёк. Можно подать новую заявку с этими данными"
         )
     _verify_challenge(db, app, user, SignPurpose.CONTRACT, body.challenge_id, body.code)
+    offer.signed_at = utcnow()  # от даты подписания строится график кредита
     add_event(
         db,
         app,
@@ -727,12 +780,15 @@ def sign_contract(
         actor_type=ActorType.CLIENT,
         actor_id=user.id,
     )
+    revolving = offer.product.repayment_type == "REVOLVING"
     transition(
         db,
         app,
         AppStatus.DISBURSEMENT,
-        title="Договор подписан, перечисляем деньги",
-        stage_detail="Готовим выдачу кредита",
+        title="Договор подписан, устанавливаем лимит овердрафта"
+        if revolving
+        else "Договор подписан, перечисляем деньги",
+        stage_detail="Готовим подключение овердрафта" if revolving else "Готовим выдачу кредита",
     )
     enqueue(db, app, JobStage.DISBURSEMENT)
     _commit(db)
@@ -748,25 +804,49 @@ def sign_contract(
     status_code=201,
     summary="Подать новую заявку на основе закрытой",
 )
-def reapply(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
+def reapply(
+    app_id: uuid.UUID,
+    conditions: ConditionsIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(client_only),
+):
     parent, _ = get_client_application(db, user, app_id)
     _require_status(parent, AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED)
+    lock_key(db, f"reapply:{parent.id}")  # две одновременные кнопки не создадут две заявки
+    live = db.scalar(
+        select(Application.number)
+        .where(Application.parent_id == parent.id, Application.status.not_in([s.value for s in TERMINAL_STATUSES]))
+        .limit(1)
+    )
+    if live:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"По этой заявке уже создана новая — № {live}. Откройте её в списке заявок"
+        )
+    c = conditions or ConditionsIn()
+    if c.product_code:
+        product = db.get(Product, c.product_code)
+        if product is None or not product.is_active or parent.purpose not in product.purposes:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Продукт не подходит для цели заявки")
     body = ApplicationCreate(
         company_id=parent.company_id,
-        product_code=parent.product_code,
-        amount=float(parent.amount),
-        term_months=parent.term_months,
+        product_code=c.product_code or parent.product_code,
+        amount=c.amount if c.amount is not None else float(parent.amount),
+        term_months=c.term_months or parent.term_months,
         purpose=parent.purpose,
         purpose_details=parent.purpose_details,
         parent_id=parent.id,
     )
     app, member = _new_application(db, user, body)
-    # Документы переносятся копиями: у новой заявки свои файлы. Согласия не переносятся — их подписывают заново
+    # условия из конструктора: залог и поручительство, если клиент их выбрал
+    if c.owner_guarantee is not None:
+        app.owner_guarantee = c.owner_guarantee
+    if c.has_collateral is not None:
+        app.has_collateral = pledged(db.get(Product, app.product_code), c.has_collateral)
+    # Документы переносятся ссылкой на тот же файл: место в хранилище не расходуется, файл удаляется,
+    # только когда на него не ссылается ни одна заявка. Согласия не переносятся — их подписывают заново
     copied = []
-    for d in parent.documents:
-        try:
-            key = storage.copy(d.storage_key, app.id)
-        except (storage.StorageError, OSError):
+    for d in parent.documents[:MAX_DOCUMENTS_PER_APPLICATION]:
+        if not storage.exists(d.storage_key):
             continue  # файла нет в хранилище — клиент приложит его заново
         db.add(
             ApplicationDocument(
@@ -776,7 +856,7 @@ def reapply(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depen
                 content_type=d.content_type,
                 size_bytes=d.size_bytes,
                 sha256=d.sha256,
-                storage_key=key,
+                storage_key=d.storage_key,
                 uploaded_by_id=user.id,
             )
         )
@@ -792,6 +872,33 @@ def reapply(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depen
         )
     _commit(db)
     return _out(db, app, member)
+
+
+@router.post(
+    "/{app_id}/simulation",
+    response_model=SimulationOut,
+    summary="Конструктор условий: решение банка при другой сумме, сроке, залоге и поручительстве",
+)
+def simulation(app_id: uuid.UUID, body: SimulationIn, db: Session = Depends(get_db), user: User = Depends(client_only)):
+    """Расчёт той же балльной моделью и политикой, что и решение по заявке, на сведениях из ЕГРЮЛ, ФНС и БКИ,
+    полученных при её рассмотрении. Ничего не сохраняет."""
+    app, _ = get_client_application(db, user, app_id)
+    try:
+        sim = Simulator(db, app)
+        base = sim.base_params()
+        params = Params(
+            product_code=body.product_code or base.product_code,
+            amount=body.amount if body.amount is not None else base.amount,
+            term_months=body.term_months or base.term_months,
+            has_collateral=base.has_collateral if body.has_collateral is None else body.has_collateral,
+            owner_guarantee=base.owner_guarantee if body.owner_guarantee is None else body.owner_guarantee,
+        )
+        result = sim.run(params)
+        suggestions = sim.suggestions(params, result) if body.with_suggestions else []
+    except SimulationError as e:
+        code = status.HTTP_409_CONFLICT if e.unavailable else status.HTTP_422_UNPROCESSABLE_CONTENT
+        raise HTTPException(code, str(e)) from e
+    return {"base": base.to_dict(), "result": result, "suggestions": suggestions, "products": sim.product_options()}
 
 
 @router.get("/{app_id}/messages", response_model=list[MessageOut], summary="Переписка с банком по заявке")

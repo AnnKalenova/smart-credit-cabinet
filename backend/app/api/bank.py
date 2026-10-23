@@ -1,14 +1,15 @@
 """Рабочее место банка: очередь заявок, досье, решение аналитика, мониторинг, параметры политики."""
 
+import math
 import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, contains_eager, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.config import get_settings
 from app.db import get_db
 from app.domain.enums import (
     DOC_TYPES,
@@ -19,38 +20,70 @@ from app.domain.enums import (
     DecisionOutcome,
     InfoRequestStatus,
     JobStage,
+    JobStatus,
     Role,
 )
-from app.domain.policy import POLICY_VERSION, ProductParams, _offer, price
+from app.domain.policy import POLICY_VERSION, ProductParams, _offer, price, rate_bounds, round_rate
 from app.domain.scoring import months_between
+from app.domain.text import fmt_amount, fmt_money, fmt_rate, lower_first, months_range
 from app.integrations.client import ExternalSystems, IntegrationError
-from app.models import Application, ApplicationDocument, Company, Decision, InfoRequest, Message, Product, Setting, User
+from app.models import (
+    Application,
+    ApplicationDocument,
+    Company,
+    Decision,
+    InfoRequest,
+    Message,
+    PipelineJob,
+    Product,
+    Setting,
+    User,
+)
 from app.schemas import BankApplicationRow, BankDecisionIn, FaultIn, MessageIn, MessageOut, SettingIn, SettingOut
 from app.security import require_roles
 from app.services import storage
 from app.services.pipeline import create_offers
-from app.services.views import bank_application_out, bank_rows, dashboard, latest_scoring, message_out
+from app.services.views import (
+    bank_application_out,
+    bank_rows,
+    dashboard,
+    disbursement_failed,
+    latest_scoring,
+    message_out,
+)
 from app.services.workflow import (
     DEFAULT_SETTINGS,
     add_event,
     enqueue,
     key_rate,
     local_today,
+    lock_key,
     notify_company,
     transition,
     utcnow,
 )
 
 router = APIRouter(prefix="/api/v1/bank", tags=["Банк: обработка заявок"])
+settings = get_settings()
 staff = require_roles(Role.ANALYST, Role.RISK_MANAGER)
-risk_only = require_roles(Role.RISK_MANAGER)
 
 
 def _get_app(db: Session, app_id: uuid.UUID) -> Application:
+    """Банк видит только отправленные заявки: черновик (даже отменённый) — данные клиента без его согласий."""
     app = db.get(Application, app_id)
-    if app is None or app.status == AppStatus.DRAFT:
+    if app is None or app.submitted_at is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
     return app
+
+
+def _require_risk_manager(user: User, action: str) -> None:
+    if user.role != Role.RISK_MANAGER:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"{action} может только риск-менеджер")
+
+
+def _require_demo() -> None:
+    if not settings.demo_mode:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Недоступно")
 
 
 def _commit(db: Session) -> None:
@@ -70,9 +103,25 @@ def list_applications(
     db: Session = Depends(get_db),
     user: User = Depends(staff),
 ):
-    query = select(Application).join(Company).where(Application.status != AppStatus.DRAFT)
+    query = select(Application).join(Company).where(Application.submitted_at.is_not(None))
     if scope == "queue":
-        query = query.where(Application.status == AppStatus.MANUAL_REVIEW)
+        # в очереди специалиста — ручное рассмотрение и выдачи, которые не прошли после всех попыток
+        failed = select(PipelineJob.id).where(
+            PipelineJob.application_id == Application.id,
+            PipelineJob.stage == JobStage.DISBURSEMENT,
+            PipelineJob.status == JobStatus.FAILED,
+        )
+        running = select(PipelineJob.id).where(
+            PipelineJob.application_id == Application.id,
+            PipelineJob.stage == JobStage.DISBURSEMENT,
+            PipelineJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+        )
+        query = query.where(
+            or_(
+                Application.status == AppStatus.MANUAL_REVIEW,
+                (Application.status == AppStatus.DISBURSEMENT) & failed.exists() & ~running.exists(),
+            )
+        )
     elif scope == "active":
         query = query.where(Application.status.not_in([s.value for s in TERMINAL_STATUSES]))
     elif scope == "mine":
@@ -119,8 +168,8 @@ def get_application(app_id: uuid.UUID, db: Session = Depends(get_db), user: User
                 "min_term": params.min_term,
                 "max_term": params.max_term,
                 "default_rate": rate,
-                "min_rate": round(kr + 1.0, 1),
-                "max_rate": round(kr + params.max_spread, 1),
+                "min_rate": rate_bounds(params, kr)[0],
+                "max_rate": rate_bounds(params, kr)[1],
             }
         )
     data["key_rate"] = kr
@@ -149,8 +198,29 @@ def assign(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depend
 )
 def rerun(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(staff)):
     app = _get_app(db, app_id)
+    lock_key(db, f"rerun:{app.id}")  # двойное нажатие не поставит этап в очередь дважды
+    if app.status == AppStatus.DISBURSEMENT:
+        # Выдача не прошла после всех попыток (например, АБС долго недоступна): повторяем её.
+        # Запрос в АБС идемпотентен (ключ — номер заявки), поэтому повтор не создаст второй кредит
+        if not disbursement_failed(db, app):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Выдача ещё выполняется — повтор не нужен")
+        app.stage_detail = "Повторяем выдачу кредита"
+        add_event(
+            db,
+            app,
+            "DISBURSEMENT_RETRY",
+            f"Специалист повторил выдачу: {user.full_name}",
+            actor_type=ActorType.ANALYST,
+            actor_id=user.id,
+            client_visible=False,
+        )
+        enqueue(db, app, JobStage.DISBURSEMENT, delay_seconds=0.5)
+        _commit(db)
+        return {"ok": True}
     if app.status != AppStatus.MANUAL_REVIEW:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Повтор доступен только на ручном рассмотрении")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Повтор доступен на ручном рассмотрении и при сбое выдачи кредита"
+        )
     transition(
         db,
         app,
@@ -170,9 +240,23 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
     app = _get_app(db, app_id)
     if app.status != AppStatus.MANUAL_REVIEW:
         raise HTTPException(status.HTTP_409_CONFLICT, "Решение принимается только по заявкам на ручном рассмотрении")
+    if app.assignee_id not in (None, user.id) and user.role != Role.RISK_MANAGER:
+        owner = db.get(User, app.assignee_id)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Заявку рассматривает {owner.full_name if owner else 'другой специалист'}. "
+            "Решение может принять он или риск-менеджер",
+        )
     if app.assignee_id is None:
         app.assignee_id = user.id
     scoring = latest_scoring(db, app.id)
+    if body.action == "APPROVE" and scoring is None:
+        # без сведений из ЕГРЮЛ, ФНС и БКИ не проверены стоп-факторы и не рассчитан рейтинг
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Одобрить можно после проверки по ЕГРЮЛ, ФНС и БКИ. Нажмите «Повторить проверку», "
+            "когда источники снова станут доступны",
+        )
     grade = scoring.grade if scoring else "C"
     kr = key_rate(db)
     tenure = months_between(app.company.client_since, local_today())
@@ -192,16 +276,22 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
                 )
             if not params.min_amount <= o.amount <= params.max_amount:
                 raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_CONTENT, f"Сумма вне условий продукта «{params.name}»"
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"Сумма по продукту «{params.name}» — от {fmt_amount(params.min_amount)} "
+                    f"до {fmt_money(params.max_amount)}",
                 )
             if not params.min_term <= o.term_months <= params.max_term:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Срок вне условий продукта «{params.name}»")
-            default_rate, pricing = price(params, grade, kr, app.has_collateral, app.owner_guarantee, tenure)
-            rate = round(o.rate, 1) if o.rate else default_rate
-            if not kr + 1.0 - 1e-9 <= rate <= kr + params.max_spread + 1e-9:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    f"Ставка должна быть от {kr + 1.0:.1f}% до {kr + params.max_spread:.1f}%",
+                    f"Срок по продукту «{params.name}» — {months_range(params.min_term, params.max_term)}",
+                )
+            default_rate, pricing = price(params, grade, kr, app.has_collateral, app.owner_guarantee, tenure)
+            rate = round_rate(o.rate) if o.rate else default_rate
+            low, high = rate_bounds(params, kr)  # те же границы, что в подсказке аналитику
+            if not low - 1e-9 <= rate <= high + 1e-9:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"Ставка по продукту «{params.name}» — от {fmt_rate(low)} до {fmt_rate(high)}",
                 )
             if rate != default_rate:
                 pricing = [
@@ -218,9 +308,8 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
                 params, o.amount, o.term_months, rate, pricing, app.owner_guarantee, not same, label, app.has_collateral
             )
             drafts.append(draft)
-        outcome = (
-            DecisionOutcome.APPROVE if len(drafts) == 1 and not drafts[0].is_counter else DecisionOutcome.COUNTER_OFFER
-        )
+        # Одобрение, если среди вариантов есть запрошенные условия; иначе — встречное предложение
+        outcome = DecisionOutcome.APPROVE if any(not d.is_counter for d in drafts) else DecisionOutcome.COUNTER_OFFER
         decision = Decision(
             id=uuid.uuid4(),
             application_id=app.id,
@@ -299,25 +388,31 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
         )
 
     else:  # DECLINE
-        if not (body.reason or "").strip():
+        reason = (body.reason or "").strip()
+        if not reason:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Укажите причину отказа")
-        client_text = body.message_to_client or body.reason
+        # причина — в объяснении решения, сообщение специалиста — отдельно (в заявке и переписке)
         db.add(
             Decision(
                 application_id=app.id,
                 kind=DecisionKind.MANUAL,
                 outcome=DecisionOutcome.DECLINE,
-                reasons=[{"code": "manual_decline", "kind": "STOP", "text": body.reason, "client_text": client_text}],
+                reasons=[{"code": "manual_decline", "kind": "STOP", "text": reason, "client_text": reason}],
                 details={},
                 policy_version=POLICY_VERSION,
                 decided_by_id=user.id,
                 comment_internal=body.comment_internal,
-                message_to_client=client_text,
+                message_to_client=body.message_to_client,
             )
         )
         app.decided_at = utcnow()
         transition(
-            db, app, AppStatus.DECLINED, actor_type=ActorType.ANALYST, actor_id=user.id, title=f"Отказ: {client_text}"
+            db,
+            app,
+            AppStatus.DECLINED,
+            actor_type=ActorType.ANALYST,
+            actor_id=user.id,
+            title=f"Отказ: {lower_first(reason)}",
         )
 
     if body.message_to_client:
@@ -332,7 +427,7 @@ def download_document(app_id: uuid.UUID, doc_id: uuid.UUID, db: Session = Depend
     doc = db.get(ApplicationDocument, doc_id)
     if doc is None or doc.application_id != app.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Документ не найден")
-    return FileResponse(storage.path_for(doc.storage_key), media_type=doc.content_type, filename=doc.file_name)
+    return storage.file_response(doc)
 
 
 @router.get("/applications/{app_id}/messages", response_model=list[MessageOut], summary="Переписка с клиентом")
@@ -346,9 +441,9 @@ def get_messages(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = 
 @router.post("/applications/{app_id}/messages", response_model=MessageOut, status_code=201, summary="Написать клиенту")
 def post_message(app_id: uuid.UUID, body: MessageIn, db: Session = Depends(get_db), user: User = Depends(staff)):
     app = _get_app(db, app_id)
-    m = Message(application_id=app.id, author_id=user.id, author_role=Role.ANALYST, text=body.text.strip())
+    m = Message(application_id=app.id, author_id=user.id, author_role=Role.ANALYST, text=body.text)
     db.add(m)
-    notify_company(db, app, f"Сообщение по заявке № {app.number}", body.text.strip()[:200])
+    notify_company(db, app, f"Сообщение по заявке № {app.number}", body.text[:200])
     _commit(db)
     db.refresh(m)
     return message_out(m)
@@ -376,25 +471,43 @@ def get_settings_list(db: Session = Depends(get_db), user: User = Depends(staff)
     return result
 
 
-@router.put("/settings/{key}", response_model=SettingOut, summary="Изменить параметр (риск-менеджер)")
-def put_setting(key: str, body: SettingIn, db: Session = Depends(get_db), user: User = Depends(risk_only)):
-    if key not in DEFAULT_SETTINGS:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Параметр не найден")
-    if key == "key_rate":
-        try:
-            value = round(float(body.value), 2)
-        except (TypeError, ValueError) as e:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Ставка должна быть числом") from e
-        if not 0 < value < 50:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Ставка должна быть от 0 до 50%")
-    else:
-        value = str(body.value)[:300]
+def _set(db: Session, key: str, value, user: User) -> Setting:
     row = db.get(Setting, key)
     if row is None:
         row = Setting(key=key, value=value, description=DEFAULT_SETTINGS[key][1])
         db.add(row)
     row.value = value
     row.updated_by = user.full_name
+    return row
+
+
+@router.put("/settings/{key}", response_model=SettingOut, summary="Изменить параметр (риск-менеджер)")
+def put_setting(key: str, body: SettingIn, db: Session = Depends(get_db), user: User = Depends(staff)):
+    _require_risk_manager(user, "Менять параметры кредитной политики")
+    if key not in DEFAULT_SETTINGS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Параметр не найден")
+    if key == "key_rate":
+        raw = body.value
+        if isinstance(raw, bool) or not isinstance(raw, int | float | str):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Ставка должна быть числом")
+        try:
+            value = round(float(str(raw).replace(",", ".").strip()), 2)
+        except (TypeError, ValueError, OverflowError) as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Ставка должна быть числом") from e
+        if not math.isfinite(value) or not 0 < value < 50:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Ставка должна быть больше 0 и меньше 50%")
+        previous = db.get(Setting, key)
+        changed = previous is None or float(previous.value) != value
+        row = _set(db, key, value, user)
+        if changed:
+            # подпись к ставке в кабинете клиента не должна остаться от прошлого значения
+            _set(db, "key_rate_note", f"Установлена в банке {local_today().strftime('%d.%m.%Y')}", user)
+    else:
+        if not isinstance(body.value, str) or not body.value.strip():
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Укажите текст")
+        if len(body.value.strip()) > 300:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Текст — не длиннее 300 символов")
+        row = _set(db, key, body.value.strip(), user)
     db.commit()
     db.refresh(row)
     return {
@@ -406,8 +519,9 @@ def put_setting(key: str, body: SettingIn, db: Session = Depends(get_db), user: 
     }
 
 
-@router.get("/integrations/faults", summary="Состояние симулятора внешних систем")
+@router.get("/integrations/faults", summary="Состояние симулятора внешних систем (демо-стенд)")
 def get_faults(user: User = Depends(staff)):
+    _require_demo()
     try:
         with ExternalSystems() as ext:
             return ext.control_faults()
@@ -415,8 +529,9 @@ def get_faults(user: User = Depends(staff)):
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Симулятор внешних систем недоступен") from e
 
 
-@router.post("/integrations/faults", summary="Смоделировать сбой внешней системы (демонстрация отказоустойчивости)")
+@router.post("/integrations/faults", summary="Смоделировать сбой внешней системы (демо-стенд)")
 def set_fault(body: FaultIn, user: User = Depends(staff)):
+    _require_demo()
     try:
         with ExternalSystems() as ext:
             return ext.control_faults(body.model_dump())

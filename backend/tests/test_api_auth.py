@@ -98,7 +98,7 @@ def test_validation_errors_are_explained_in_russian(login):
 
     draft = u.draft("EXPRESS", "OTHER", 500_000, 6)
     resp = u.call("PATCH", f"/api/v1/applications/{draft['id']}", json={"amount": None}, expect=422)
-    assert "нельзя оставить пустым: сумма" in resp["detail"]["problems"][0]
+    assert resp["detail"]["problems"] == ["Сумма: нельзя оставить пустым"]
     resp = u.call("PATCH", f"/api/v1/applications/{draft['id']}", json={"contact_phone": "1" * 40}, expect=422)
     assert resp["detail"]["problems"] == ["Телефон: слишком длинное значение (не больше 32 символов)"]
     assert u.get(draft["id"])["amount"] == 500_000

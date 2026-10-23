@@ -12,6 +12,8 @@ engine = create_engine(
     pool_size=_settings.db_pool_size,
     pool_pre_ping=True,
     future=True,
+    # значения параметров SQL не попадают в тексты ошибок и логи: там бывают персональные данные
+    hide_parameters=True,
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 

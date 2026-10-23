@@ -13,15 +13,18 @@ from app.domain.enums import (
     DECISION_LABELS,
     DOC_TYPES,
     POSITION_LABELS,
+    TERMINAL_STATUSES,
     AppStatus,
     DecisionOutcome,
     InfoRequestStatus,
+    JobStage,
+    JobStatus,
     OfferStatus,
 )
 from app.domain.finance import build_annuity_schedule, build_revolving_schedule
 from app.domain.products import required_documents
 from app.domain.scoring import GRADE_LABELS
-from app.domain.statuses import BANK_LABELS, CLIENT_CANCELLABLE, client_view
+from app.domain.statuses import BANK_LABELS, CLIENT_CANCELLABLE, CLIENT_STATUS, client_view
 from app.models import (
     Application,
     ApplicationEvent,
@@ -36,6 +39,7 @@ from app.models import (
     Loan,
     Message,
     Offer,
+    PipelineJob,
     ScoringResult,
     User,
 )
@@ -82,8 +86,17 @@ def document_out(d) -> dict:
     }
 
 
+def schedule_start(offer) -> date:
+    """Дата начала графика: день подписания договора, а до подписания — сегодня. Выдача строит график
+    от той же даты, поэтому подписанный график и график выданного кредита совпадают."""
+    if offer.signed_at is not None:
+        return local_time(offer.signed_at).date()
+    return local_today()
+
+
 def schedule_for(offer) -> list[dict]:
-    start = local_time(offer.accepted_at or utcnow()).date()
+    """График платежей по предложению (после выдачи показывается сохранённый график кредита)."""
+    start = schedule_start(offer)
     if offer.product.repayment_type == "REVOLVING":
         return build_revolving_schedule(float(offer.amount), float(offer.rate), offer.term_months, start)
     return build_annuity_schedule(float(offer.amount), float(offer.rate), offer.term_months, start)
@@ -162,8 +175,25 @@ def loan_out(loan: Loan, app: Application, with_schedule: bool = False) -> dict:
     }
 
 
-def summary_out(app: Application) -> dict:
+def app_status_view(app: Application) -> dict:
+    """Статус для клиента с поправкой на продукт и историю заявки (без запросов к БД)."""
     view = client_view(app.status)
+    status = AppStatus(app.status)
+    revolving = app.product.repayment_type == "REVOLVING"
+    if status == AppStatus.DISBURSEMENT and revolving:
+        view["title"] = "Подключаем овердрафт"
+        view["now"] = "Устанавливаем лимит овердрафта на ваш расчётный счёт."
+    elif status == AppStatus.ISSUED and revolving:
+        view["title"] = "Овердрафт подключён"
+        view["now"] = "Лимит овердрафта установлен на расчётный счёт: деньги доступны при нехватке остатка."
+    elif status == AppStatus.CANCELLED and app.submitted_at is None:
+        view["title"] = "Черновик отменён"
+        view["now"] = "Заявка не отправлялась в банк."
+    return view
+
+
+def summary_out(app: Application) -> dict:
+    view = app_status_view(app)
     return {
         "id": app.id,
         "number": app.number,
@@ -233,6 +263,9 @@ def client_decision_view(db: Session, app: Application) -> dict | None:
         r["client_text"] for r in d.reasons if r.get("client_text") and r.get("kind") in ("STOP", "LIMIT", "INFO")
     ]
     scoring = latest_scoring(db, app.id)
+    declined = d.outcome == DecisionOutcome.DECLINE
+    if declined:
+        scoring = None  # при отказе не показываем «минимальный риск» и сильные стороны — это сбивает с толку
     positives, negatives = [], []
     if scoring:
         for f in sorted(scoring.factors, key=lambda f: -f["points"]):
@@ -256,17 +289,98 @@ def client_decision_view(db: Session, app: Application) -> dict | None:
     }
 
 
-def client_status_view(app: Application, offers: list[Offer]) -> dict:
-    view = client_view(app.status)
-    if app.status == AppStatus.MANUAL_REVIEW and app.review_due_at:
+def local_deadline(dt) -> str:
+    """«02.11.2026 09:57 МСК»: срок с точностью до минуты и с часовым поясом."""
+    text = local_time(dt).strftime("%d.%m.%Y %H:%M")
+    return text + " МСК" if get_settings().display_timezone == "Europe/Moscow" else text
+
+
+def disbursement_failed(db: Session, app: Application) -> bool:
+    """Выдача не прошла после всех попыток, и новой попытки в очереди нет — нужен повтор специалистом."""
+    if app.status != AppStatus.DISBURSEMENT:
+        return False
+    last = db.scalar(
+        select(PipelineJob.status)
+        .where(PipelineJob.application_id == app.id, PipelineJob.stage == JobStage.DISBURSEMENT)
+        .order_by(PipelineJob.id.desc())
+        .limit(1)
+    )
+    return last == JobStatus.FAILED
+
+
+def client_status_view(db: Session, app: Application, offers: list[Offer], member: CompanyMember | None = None) -> dict:
+    view = app_status_view(app)
+    status = AppStatus(app.status)
+    sole = app.company.kind == "IP"
+    signer_word = "предприниматель" if sole else "руководитель"
+    can_sign = member is None or member.can_sign
+
+    if status == AppStatus.DRAFT and not can_sign:
         view["next"] = (
-            "Решение появится здесь же, в кабинете, ориентировочно до "
-            f"{local_time(app.review_due_at).strftime('%d.%m %H:%M')}. Если понадобятся документы, мы напишем в этой заявке."
+            f"Заполните заявку и передайте её на подпись: согласия подписывает и заявку отправляет {signer_word} "
+            "или представитель по доверенности."
         )
-    if app.status == AppStatus.OFFER_READY and offers:
-        until = min(o.valid_until for o in offers)
-        view["next"] = f"Выберите вариант и примите предложение до {local_time(until).strftime('%d.%m.%Y')}."
+    elif status == AppStatus.ENRICHMENT:
+        view["now"] = (
+            "Запрашиваем сведения о вас в ЕГРИП, ФНС и бюро кредитных историй."
+            if sole
+            else "Запрашиваем сведения о компании в ЕГРЮЛ, ФНС и бюро кредитных историй."
+        )
+    elif status == AppStatus.SCORING and sole:
+        view["now"] = "Рассчитываем кредитный рейтинг по данным о бизнесе и оборотах по счёту."
+    elif status == AppStatus.MANUAL_REVIEW and app.review_due_at:
+        if app.review_due_at < utcnow():
+            view["next"] = (
+                "Рассмотрение занимает больше времени, чем обычно. Решение появится здесь же, в кабинете, "
+                "а мы пришлём уведомление."
+            )
+        else:
+            view["next"] = (
+                "Решение появится здесь же, в кабинете, ориентировочно до "
+                f"{local_deadline(app.review_due_at)}. Если понадобятся документы, мы напишем в этой заявке."
+            )
+    elif status == AppStatus.OFFER_READY and offers:
+        until = local_deadline(min(o.valid_until for o in offers))
+        view["next"] = (
+            f"Выберите вариант и примите предложение до {until}."
+            if can_sign
+            else f"Принять предложение может {signer_word} или представитель по доверенности — до {until}. "
+            "Нажмите «Передать на подпись», и мы его уведомим."
+        )
+    elif status == AppStatus.SIGNING:
+        view["next"] = (
+            f"Подпишите документы кодом подтверждения. Подписывает {signer_word} или представитель по доверенности."
+            if can_sign
+            else f"Договор подписывает {signer_word} или представитель по доверенности. "
+            "Нажмите «Передать на подпись», и мы его уведомим."
+        )
+    elif status == AppStatus.DISBURSEMENT and disbursement_failed(db, app):
+        view["now"] = "Выдача задерживается: учётная система банка не ответила вовремя."
+        view["next"] = "Специалист банка уже получил уведомление и повторит выдачу. От вас ничего не требуется."
+    elif status == AppStatus.DECLINED:
+        d = latest_decision(db, app.id)
+        fixable = d is not None and not any(
+            r.get("kind") == "STOP" and r.get("code") != "no_capacity" for r in d.reasons
+        )
+        if not fixable:
+            view["now"] = "Банк не может выдать кредит."
     return view
+
+
+def next_application(db: Session, app: Application) -> dict | None:
+    """Новая заявка, поданная на основе этой (повторная подача или конструктор условий)."""
+    child = db.scalar(
+        select(Application).where(Application.parent_id == app.id).order_by(Application.created_at.desc()).limit(1)
+    )
+    if child is None:
+        return None
+    return {
+        "id": child.id,
+        "number": child.number,
+        "status": child.status,
+        "status_title": CLIENT_STATUS[AppStatus(child.status)][0],
+        "is_live": AppStatus(child.status) not in TERMINAL_STATUSES,
+    }
 
 
 def application_out(db: Session, app: Application, member: CompanyMember) -> dict:
@@ -302,7 +416,8 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
         )
     ]
     data = summary_out(app)
-    data["status_view"] = client_status_view(app, offers)
+    data["status_view"] = client_status_view(db, app, offers, member)
+    child = next_application(db, app)
     data.update(
         {
             "purpose_details": app.purpose_details,
@@ -325,6 +440,7 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
             "loan": loan_out(loan, app, with_schedule=False) if loan else None,
             "review_due_at": app.review_due_at,
             "parent_id": app.parent_id,
+            "next_application": child,
             "permissions": {
                 "can_edit": app.status == AppStatus.DRAFT,
                 "can_submit": app.status == AppStatus.DRAFT and member.can_sign,
@@ -335,7 +451,8 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
                 "can_request_signature": app.status in (AppStatus.DRAFT, AppStatus.OFFER_READY, AppStatus.SIGNING)
                 and not member.can_sign,
                 "can_reapply": app.status
-                in (AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED),
+                in (AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED)
+                and not (child and child["is_live"]),
                 "signers": signers,
                 "position_label": POSITION_LABELS.get(member.position, member.position),
             },
@@ -405,7 +522,9 @@ def bank_row(db: Session, app: Application, scoring=_UNSET, d=_UNSET) -> dict:
         "status_changed_at": app.status_changed_at,
         "review_due_at": app.review_due_at,
         "sla_overdue": bool(app.status == AppStatus.MANUAL_REVIEW and app.review_due_at and app.review_due_at < now),
-        "triggers": _triggers(d),
+        "triggers": ["Выдача не прошла — повторите её, когда АБС снова доступна"]
+        if disbursement_failed(db, app)
+        else _triggers(d),
     }
 
 
@@ -551,6 +670,7 @@ def bank_application_out(db: Session, app: Application) -> dict:
         "permissions": {
             "can_decide": app.status == AppStatus.MANUAL_REVIEW,
             "can_rerun": app.status == AppStatus.MANUAL_REVIEW,
+            "can_retry_disbursement": disbursement_failed(db, app),
         },
     }
 
@@ -567,7 +687,10 @@ def message_out(m: Message) -> dict:
 
 def dashboard(db: Session) -> dict:
     now = utcnow()
-    by_status = dict(db.execute(select(Application.status, func.count()).group_by(Application.status)).all())
+    sent = Application.submitted_at.is_not(None)  # черновики — не в работе банка
+    by_status = dict(
+        db.execute(select(Application.status, func.count()).where(sent).group_by(Application.status)).all()
+    )
     total = sum(by_status.values())
     submitted = db.scalar(select(func.count()).where(Application.submitted_at.is_not(None))) or 0
     reached_offer = (
@@ -642,7 +765,7 @@ def dashboard(db: Session) -> dict:
         for e, num in db.execute(
             select(ApplicationEvent, Application.number)
             .join(Application, Application.id == ApplicationEvent.application_id)
-            .where(ApplicationEvent.event_type == "STATUS_CHANGED")
+            .where(ApplicationEvent.event_type == "STATUS_CHANGED", sent)
             .order_by(ApplicationEvent.created_at.desc())
             .limit(12)
         ).all()

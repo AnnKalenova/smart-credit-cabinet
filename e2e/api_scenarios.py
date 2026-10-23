@@ -190,7 +190,7 @@ def scenario_manual_risky(base: str) -> str:
                 },
                 {"type": "COMMENT", "label": "Расскажите о причинах смены руководителя"},
             ],
-            "message_to_client": "Нужны пара документов, чтобы принять решение",
+            "message_to_client": "Нужна пара документов, чтобы принять решение",
         },
     )
     app = c.wait(app["id"])

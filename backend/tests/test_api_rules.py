@@ -187,9 +187,10 @@ def test_analyst_offer_must_fit_application_purpose(login):
     assert c.get(app["id"])["status"] == "OFFER_READY"
 
 
-def test_reapply_copies_documents_into_new_application(login):
+def test_reapply_carries_documents_into_new_application(login):
     from app.db import SessionLocal
     from app.models import ApplicationDocument
+    from app.services import storage
 
     u = login("lebedev")
     draft = u.draft("INVESTMENT", "EQUIPMENT", 3_000_000, 36, collateral_description="Фрезерный станок")
@@ -211,9 +212,26 @@ def test_reapply_copies_documents_into_new_application(login):
     )
     with SessionLocal() as db:
         keys = {db.get(ApplicationDocument, d["id"]).storage_key for d in (copied, original)}
-    assert len(keys) == 2  # у каждой заявки свой файл
+    assert len(keys) == 1  # файл не копируется: новая заявка ссылается на тот же
+    key = keys.pop()
+    # удаление из новой заявки не трогает файл, пока на него ссылается исходная
     u.call("DELETE", _url(new, f"/documents/{copied['id']}"), expect=204)
+    assert storage.exists(key)
     assert u.call("GET", _url(draft, f"/documents/{original['id']}")).content
+
+    # по одной закрытой заявке — одна живая новая: повторное нажатие не плодит черновики
+    again = u.call("POST", _url(draft, "/reapply"), expect=409)
+    assert new["number"] in again["detail"]
+    parent = u.get(draft["id"])
+    assert parent["next_application"]["number"] == new["number"] and parent["permissions"]["can_reapply"] is False
+
+    # файл, на который больше никто не ссылается, удаляется вместе с последним документом
+    third = u.draft("EXPRESS", "OTHER", 500_000, 6)
+    doc = u.demo_doc(third["id"], "OTHER")
+    with SessionLocal() as db:
+        own_key = db.get(ApplicationDocument, doc["id"]).storage_key
+    u.call("DELETE", _url(third, f"/documents/{doc['id']}"), expect=204)
+    assert not storage.exists(own_key)
 
 
 # --------------------------------------------------------------------------- файлы и лимиты

@@ -24,6 +24,7 @@ class IntegrationError(Exception):
     def __init__(self, service: str, message: str, retryable: bool = True):
         super().__init__(f"{service}: {message}")
         self.service = service
+        self.reason = message  # без кода сервиса — для текстов специалисту
         self.retryable = retryable
 
 
@@ -32,6 +33,14 @@ SERVICE_TITLES = {
     "FNS": "ФНС «Прозрачный бизнес»",
     "BKI": "Бюро кредитных историй",
     "ABS": "АБС банка",
+}
+
+# «Не удалось получить данные из …»
+SERVICE_FROM = {
+    "EGRUL": "из ЕГРЮЛ/ЕГРИП",
+    "FNS": "из сервиса ФНС «Прозрачный бизнес»",
+    "BKI": "из бюро кредитных историй",
+    "ABS": "из АБС банка",
 }
 
 

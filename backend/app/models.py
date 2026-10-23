@@ -227,6 +227,8 @@ class ApplicationDocument(Base):
 
 class Consent(Base):
     __tablename__ = "consents"
+    # одно согласие каждого вида на заявку: повторная подпись параллельным запросом не создаст дубль
+    __table_args__ = (UniqueConstraint("application_id", "consent_type", name="uq_consents_application_type"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     application_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("applications.id"), nullable=False)
@@ -346,6 +348,8 @@ class Offer(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # дата подписания договора: от неё строится график — подписанный и в выданном кредите один и тот же
+    signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     product: Mapped[Product] = relationship()
 
@@ -424,7 +428,10 @@ class LoginAttempt(TimestampMixin, Base):
     """Попытки входа: защита от подбора пароля и журнал входов."""
 
     __tablename__ = "login_attempts"
-    __table_args__ = (Index("ix_login_attempts_login", "login", "created_at"),)
+    __table_args__ = (
+        Index("ix_login_attempts_login", "login", "created_at"),
+        Index("ix_login_attempts_ip", "ip", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     login: Mapped[str] = mapped_column(String(64), nullable=False)

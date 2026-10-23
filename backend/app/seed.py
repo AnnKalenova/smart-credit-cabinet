@@ -80,10 +80,14 @@ def _demo_accounts(data: dict) -> list[dict]:
                     "title": title,
                     "company": c["short_name"],
                     "scenario": (
-                        f"{c['scenario']}: {c['scenario_hint']}"
+                        f"{c['scenario']}. {c['scenario_hint']}"
                         if u["can_sign"]
                         else "Бухгалтер готовит заявку, но подписать и отправить её может только руководитель"
                     ),
+                    "scenario_title": c["scenario"] if u["can_sign"] else "Без права подписи",
+                    "scenario_hint": c["scenario_hint"]
+                    if u["can_sign"]
+                    else "Готовит заявку, а подписать и отправить её может только руководитель",
                 }
             )
     for s in data["staff"]:
@@ -96,6 +100,12 @@ def _demo_accounts(data: dict) -> list[dict]:
                 "title": s["title"],
                 "company": None,
                 "scenario": (
+                    "Очередь ручного рассмотрения, досье заявки, решение, мониторинг конвейера"
+                    if s["role"] == Role.ANALYST
+                    else "Ключевая ставка и параметры политики, моделирование сбоев внешних систем"
+                ),
+                "scenario_title": "Кредитный специалист" if s["role"] == Role.ANALYST else "Риск-менеджер",
+                "scenario_hint": (
                     "Очередь ручного рассмотрения, досье заявки, решение, мониторинг конвейера"
                     if s["role"] == Role.ANALYST
                     else "Ключевая ставка и параметры политики, моделирование сбоев внешних систем"
@@ -139,6 +149,11 @@ def seed(db: Session) -> bool:
     for key, (value, description) in DEFAULT_SETTINGS.items():
         if db.get(Setting, key) is None:
             db.add(Setting(key=key, value=value, description=description, updated_by="Начальная настройка"))
+    if not settings.demo_mode:
+        # вне демо-режима демо-учётки с общеизвестным паролем не создаются: пользователи приходят через SSO банка
+        db.commit()
+        log.info("демо-режим выключен: загружены только справочники")
+        return False
     if db.scalar(select(User).limit(1)) is not None:
         db.commit()
         log.info("демо-данные уже загружены")

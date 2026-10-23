@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -143,8 +143,13 @@ def notifications(db: Session = Depends(get_db), user: User = Depends(get_curren
             .limit(30)
         )
     )
-    unread = sum(1 for n in items if not n.is_read)
-    return {"unread": unread, "items": items}
+    # счётчик — по всем непрочитанным, а не только по последним 30 в списке
+    unread = db.scalar(
+        select(func.count())
+        .select_from(Notification)
+        .where(Notification.user_id == user.id, Notification.is_read.is_(False))
+    )
+    return {"unread": unread or 0, "items": items}
 
 
 @router.post("/notifications/read-all", status_code=204, summary="Отметить уведомления прочитанными")

@@ -6,11 +6,43 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+def _has_nul(value: Any, depth: int = 0) -> bool:
+    if isinstance(value, str):
+        return "\x00" in value
+    if depth > 8:
+        return False
+    if isinstance(value, dict):
+        return any(_has_nul(k, depth + 1) or _has_nul(v, depth + 1) for k, v in value.items())
+    if isinstance(value, list | tuple):
+        return any(_has_nul(v, depth + 1) for v in value)
+    return False
+
+
+class InModel(BaseModel):
+    """Входные данные. Символ NUL (\\x00) PostgreSQL хранить не умеет — такой ввод получает 422, а не 500."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_nul(cls, data: Any) -> Any:
+        if _has_nul(data):
+            raise ValueError("недопустимый символ в тексте")
+        return data
+
+
+def _not_blank(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        raise ValueError("не может быть пустым")
+    return value
 
 
 # --------------------------------------------------------------------------- auth
@@ -19,12 +51,12 @@ class ORMModel(BaseModel):
 # Ограничения длины и диапазонов совпадают с колонками БД: некорректный ввод получает 422, а не 500
 MAX_AMOUNT = 10_000_000_000  # 10 млрд ₽ — заведомо больше любого продукта
 MAX_REVENUE = 1_000_000_000_000
-Money = Annotated[float, Field(gt=0, le=MAX_AMOUNT, allow_inf_nan=False)]
+Money = Annotated[float, Field(ge=1, le=MAX_AMOUNT, allow_inf_nan=False)]
 Term = Annotated[int, Field(gt=0, le=120)]
 Code = Annotated[str, Field(min_length=1, max_length=32)]
 
 
-class LoginIn(BaseModel):
+class LoginIn(InModel):
     login: str = Field(max_length=64, examples=["smirnov"])
     password: str = Field(max_length=128, examples=["demo1234"])
 
@@ -66,6 +98,8 @@ class DemoAccount(BaseModel):
     title: str
     company: str | None = None
     scenario: str
+    scenario_title: str | None = None
+    scenario_hint: str | None = None
 
 
 # --------------------------------------------------------------------------- справочники и компания
@@ -124,7 +158,7 @@ class CompanyProfileOut(BaseModel):
     revenue_estimate: float
 
 
-class MatchIn(BaseModel):
+class MatchIn(InModel):
     company_id: uuid.UUID
     purpose: Code
     amount: Money
@@ -139,7 +173,7 @@ class MatchOut(BaseModel):
 # --------------------------------------------------------------------------- заявка
 
 
-class ApplicationCreate(BaseModel):
+class ApplicationCreate(InModel):
     company_id: uuid.UUID
     product_code: Code
     amount: Money
@@ -150,17 +184,10 @@ class ApplicationCreate(BaseModel):
 
 
 # Поля, которые нельзя очистить: в БД они NOT NULL
-REQUIRED_DRAFT_FIELDS = {
-    "product_code": "продукт",
-    "amount": "сумма",
-    "term_months": "срок",
-    "purpose": "цель",
-    "has_collateral": "залог",
-    "owner_guarantee": "поручительство",
-}
+REQUIRED_DRAFT_FIELDS = ("product_code", "amount", "term_months", "purpose", "has_collateral", "owner_guarantee")
 
 
-class ApplicationUpdate(BaseModel):
+class ApplicationUpdate(InModel):
     product_code: Code | None = None
     amount: Money | None = None
     term_months: Term | None = None
@@ -173,16 +200,13 @@ class ApplicationUpdate(BaseModel):
     contact_name: str | None = Field(default=None, max_length=200)
     contact_phone: str | None = Field(default=None, max_length=32)
 
-    @model_validator(mode="after")
-    def no_null_for_required(self) -> ApplicationUpdate:
-        cleared = [
-            label
-            for name, label in REQUIRED_DRAFT_FIELDS.items()
-            if name in self.model_fields_set and getattr(self, name) is None
-        ]
-        if cleared:
-            raise ValueError("нельзя оставить пустым: " + ", ".join(cleared))
-        return self
+    @field_validator(*REQUIRED_DRAFT_FIELDS, mode="after")
+    @classmethod
+    def no_null_for_required(cls, value: Any) -> Any:
+        # значение по умолчанию (поле не передано) не проверяется — сюда попадает только явный null
+        if value is None:
+            raise ValueError("нельзя оставить пустым")
+        return value
 
 
 class DocumentOut(ORMModel):
@@ -294,9 +318,33 @@ class ApplicationOut(ApplicationSummaryOut):
     permissions: dict[str, Any]
     review_due_at: datetime | None
     parent_id: uuid.UUID | None
+    next_application: dict[str, Any] | None = Field(
+        default=None, description="Новая заявка, поданная на основе этой: номер и статус"
+    )
 
 
-class SignChallengeIn(BaseModel):
+class ConditionsIn(InModel):
+    """Условия для конструктора и для новой заявки: не переданное поле берётся из исходной заявки."""
+
+    product_code: Code | None = None
+    amount: Money | None = None
+    term_months: Term | None = None
+    has_collateral: bool | None = None
+    owner_guarantee: bool | None = None
+
+
+class SimulationIn(ConditionsIn):
+    with_suggestions: bool = Field(default=True, description="Посчитать подсказки «что улучшит условия»")
+
+
+class SimulationOut(BaseModel):
+    base: dict[str, Any] = Field(description="Условия исходной заявки")
+    result: dict[str, Any] = Field(description="Решение банка при заданных условиях")
+    suggestions: list[dict[str, Any]] = Field(description="Что изменить, чтобы условия стали лучше")
+    products: list[dict[str, Any]] = Field(description="Продукты под цель заявки: суммы, сроки, залог")
+
+
+class SignChallengeIn(InModel):
     purpose: Literal["CONSENTS", "CONTRACT"]
 
 
@@ -310,18 +358,18 @@ class SignChallengeOut(BaseModel):
     documents: list[str]
 
 
-class SignConfirmIn(BaseModel):
+class SignConfirmIn(InModel):
     challenge_id: uuid.UUID
     code: str = Field(min_length=4, max_length=8)
 
 
-class InfoResponseIn(BaseModel):
+class InfoResponseIn(InModel):
     comment: str | None = Field(default=None, max_length=4000)
     fields: ApplicationUpdate | None = None
 
 
-class MessageIn(BaseModel):
-    text: str = Field(min_length=1, max_length=4000)
+class MessageIn(InModel):
+    text: Annotated[str, Field(max_length=4000), AfterValidator(_not_blank)]
 
 
 class MessageOut(BaseModel):
@@ -381,7 +429,7 @@ class BankApplicationRow(BaseModel):
     triggers: list[str]
 
 
-class BankOfferIn(BaseModel):
+class BankOfferIn(InModel):
     product_code: Code
     amount: Money
     term_months: Term
@@ -389,13 +437,13 @@ class BankOfferIn(BaseModel):
     label: str | None = Field(default=None, max_length=120)
 
 
-class BankInfoItemIn(BaseModel):
+class BankInfoItemIn(InModel):
     type: Literal["DOCUMENT", "COMMENT"]
     doc_type: Code | None = None
-    label: str = Field(min_length=1, max_length=300)
+    label: Annotated[str, Field(max_length=300), AfterValidator(_not_blank)]
 
 
-class BankDecisionIn(BaseModel):
+class BankDecisionIn(InModel):
     action: Literal["APPROVE", "REQUEST_INFO", "DECLINE"]
     offers: list[BankOfferIn] = Field(default=[], max_length=3)
     info_items: list[BankInfoItemIn] = Field(default=[], max_length=10)
@@ -412,11 +460,11 @@ class SettingOut(BaseModel):
     updated_by: str | None
 
 
-class SettingIn(BaseModel):
+class SettingIn(InModel):
     value: Any
 
 
-class FaultIn(BaseModel):
+class FaultIn(InModel):
     service: Literal["EGRUL", "FNS", "BKI", "ABS"]
     mode: Literal["ok", "down", "slow"]
     duration_seconds: int = Field(default=120, ge=10, le=3600)

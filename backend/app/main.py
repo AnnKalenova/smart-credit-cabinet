@@ -1,16 +1,20 @@
 """API кредитного конвейера «Умный кредитный кабинет предпринимателя»."""
 
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram
+from sqlalchemy.exc import DataError
 from sqlalchemy.orm.exc import StaleDataError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import applications, auth, bank, client, system
 from app.config import get_settings
@@ -26,13 +30,16 @@ LATENCY = Histogram("http_request_duration_seconds", "Длительность H
 DEFAULT_SECRETS = {"dev-only-secret-change-me-0123456789abcdef", "local-demo-secret-change-me-0123456789abcdef"}
 
 DESCRIPTION = """
-Прототип цифрового кредитного конвейера для малого и микробизнеса.
+Цифровой кредитный конвейер для малого и микробизнеса.
 
 **Клиентский путь:** подбор продукта → черновик заявки с предзаполненными данными → согласия
 (простая ЭП кодом внутри продукта) → отправка → уточнения → предложение → подписание → выдача.
 
 **Банковская обработка:** проверка полноты → сбор данных (ЕГРЮЛ/ЕГРИП, ФНС, БКИ — симуляторы) →
 скоринг (балльная модель) → кредитная политика → автоматическое решение или ручное рассмотрение.
+
+**Конструктор условий:** `POST /api/v1/applications/{id}/simulation` — клиент меняет сумму, срок, продукт,
+залог и поручительство и сразу видит решение банка, ставку и платёж, а при отказе — что изменить.
 
 Авторизация: `POST /api/v1/auth/login` → кнопка **Authorize** → `Bearer <access_token>`.
 Демо-учётки: `GET /api/v1/auth/demo-accounts`, пароль у всех `demo1234`.
@@ -53,7 +60,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Умный кредитный кабинет предпринимателя — API",
-    version="1.0.0",
+    version="1.1.0",
     description=DESCRIPTION,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
@@ -70,9 +77,14 @@ app.add_middleware(
 )
 
 
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
 @app.middleware("http")
 async def observe(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    # идентификатор от прокси принимаем, только если он похож на идентификатор, — иначе генерируем свой
+    incoming = request.headers.get("X-Request-ID", "")
+    request_id = incoming if REQUEST_ID_RE.match(incoming) else uuid.uuid4().hex
     started = time.perf_counter()
     try:
         response = await call_next(request)
@@ -132,6 +144,25 @@ FIELD_LABELS = {
     "file": "Файл",
     "offers": "Варианты",
     "info_items": "Запрос",
+    "app_id": "Заявка",
+    "doc_id": "Документ",
+    "offer_id": "Предложение",
+    "scope": "Раздел",
+    "value": "Значение",
+    "status": "Статус",
+    "q": "Поиск",
+    "product": "Продукт",
+    "service": "Сервис",
+    "mode": "Режим",
+    "duration_seconds": "Длительность",
+    "purpose_code": "Цель",
+    "has_collateral": "Залог",
+    "owner_guarantee": "Поручительство",
+    "with_suggestions": "Подсказки",
+    "parent_id": "Исходная заявка",
+    "fields": "Поля",
+    "type": "Тип",
+    "action": "Действие",
 }
 
 
@@ -168,7 +199,19 @@ def _describe(err: dict) -> str:
     if t in {"float_parsing", "int_parsing", "float_type", "int_type", "finite_number", "int_from_float"}:
         return "должно быть числом"
     if t == "value_error":
-        return str(err.get("msg", "")).removeprefix("Value error, ")
+        msg = str(err.get("msg", "")).removeprefix("Value error, ")
+        if "UploadFile" in msg:
+            return "приложите файл"
+        # собственные проверки пишут по-русски; служебные английские сообщения клиенту не показываем
+        return msg if re.search("[А-Яа-яЁё]", msg) else "некорректное значение"
+    if t in {"bool_parsing", "bool_type"}:
+        return "должно быть да или нет"
+    if t in {"dict_type", "model_type", "model_attributes_type"}:
+        return "неверный формат данных"
+    if t in {"list_type", "tuple_type"}:
+        return "должно быть списком"
+    if t in {"string_type"}:
+        return "должно быть текстом"
     return "некорректное значение"
 
 
@@ -184,6 +227,37 @@ async def validation_error(request: Request, exc: RequestValidationError):
         problems.append(f"{label}: {text}" if label else text)
     return JSONResponse(
         status_code=422, content={"detail": {"message": "Проверьте введённые данные", "problems": problems}}
+    )
+
+
+# Ответы фреймворка по умолчанию (английские) — по-русски: клиент видит их в интерфейсе
+GENERIC_DETAILS = {
+    400: "Не удалось прочитать запрос — проверьте формат данных",
+    401: "Требуется вход в систему",
+    403: "Недостаточно прав",
+    404: "Не найдено",
+    405: "Метод не поддерживается",
+    413: "Слишком большой запрос",
+    415: "Неподдерживаемый формат данных",
+}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request: Request, exc: StarletteHTTPException):
+    if isinstance(exc.detail, str) and exc.detail.isascii():
+        exc = StarletteHTTPException(
+            exc.status_code, GENERIC_DETAILS.get(exc.status_code, "Ошибка обработки запроса"), headers=exc.headers
+        )
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(DataError)
+async def data_error(request: Request, exc: DataError):
+    # Например, символ NUL в параметре запроса: такой текст PostgreSQL не сохраняет. Параметры в лог не пишем
+    log.warning("данные отклонены базой", extra={"path": request.url.path, "error": type(exc.orig).__name__})
+    return JSONResponse(
+        status_code=422,
+        content={"detail": {"message": "Проверьте введённые данные", "problems": ["недопустимые символы в данных"]}},
     )
 
 

@@ -1,8 +1,8 @@
 """Аутентификация (JWT) и ролевая модель доступа.
 
-В прототипе вход по логину и паролю демо-учёток. В промышленной версии кабинет встраивается
-в интернет-банк для бизнеса и получает пользователя через SSO (OAuth 2.0 / OpenID Connect),
-поэтому отдельная регистрация не нужна: предприниматель уже клиент банка.
+На стенде вход по логину и паролю. В промышленной эксплуатации кабинет встраивается в интернет-банк
+для бизнеса и получает пользователя через SSO (OAuth 2.0 / OpenID Connect), поэтому отдельная
+регистрация не нужна: предприниматель уже клиент банка.
 """
 
 from __future__ import annotations
@@ -68,11 +68,16 @@ def get_current_user(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется вход в систему")
     try:
         payload = jwt.decode(
-            creds.credentials, settings.jwt_secret, algorithms=["HS256"], issuer="smart-credit-cabinet"
+            creds.credentials,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            issuer="smart-credit-cabinet",
+            options={"require": ["exp", "sub", "iss"]},  # токен без срока действия не принимаем
         )
-    except jwt.PyJWTError as e:
+        user_id = uuid.UUID(str(payload["sub"]))
+    except (jwt.PyJWTError, ValueError, TypeError) as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Сессия истекла, войдите снова") from e
-    user = db.get(User, uuid.UUID(payload["sub"]))
+    user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Пользователь не найден")
     return user
