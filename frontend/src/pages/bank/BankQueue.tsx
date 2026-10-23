@@ -21,8 +21,8 @@ const TONE: Record<string, string> = {
   SIGNING: "progress",
   ISSUED: "positive",
   DECLINED: "negative",
-  CLIENT_DECLINED: "negative",
-  CANCELLED: "negative",
+  CLIENT_DECLINED: "neutral",
+  CANCELLED: "neutral",
   EXPIRED: "negative",
 };
 

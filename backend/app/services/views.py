@@ -186,6 +186,7 @@ def app_status_view(app: Application) -> dict:
     elif status == AppStatus.CANCELLED and app.submitted_at is None:
         view["title"] = "Черновик отменён"
         view["now"] = "Заявка не отправлялась в банк."
+        view["step"] = 0  # рассмотрение не начиналось
     return view
 
 
@@ -380,6 +381,27 @@ def next_application(db: Session, app: Application) -> dict | None:
     }
 
 
+def proposed_conditions(db: Session, app: Application) -> dict | None:
+    """Условия из конструктора, которые сотрудник без права подписи передал руководителю, — пока заявка
+    в том же статусе, в котором их предложили."""
+    if app.status not in (AppStatus.OFFER_READY, AppStatus.MANUAL_REVIEW):
+        return None
+    ev = db.scalar(
+        select(ApplicationEvent)
+        .where(ApplicationEvent.application_id == app.id, ApplicationEvent.event_type == "CONDITIONS_PROPOSED")
+        .order_by(ApplicationEvent.created_at.desc(), ApplicationEvent.id.desc())
+        .limit(1)
+    )
+    if ev is None or (app.status_changed_at and ev.created_at < app.status_changed_at):
+        return None
+    return {
+        "conditions": ev.payload.get("conditions"),
+        "text": ev.payload.get("text"),
+        "by": ev.actor.full_name if ev.actor else None,
+        "at": ev.created_at,
+    }
+
+
 def application_out(db: Session, app: Application, member: CompanyMember) -> dict:
     product = app.product
     offers = visible_offers(db, app)
@@ -438,6 +460,7 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
             "review_due_at": app.review_due_at,
             "parent_id": app.parent_id,
             "next_application": child,
+            "proposed_conditions": proposed_conditions(db, app),
             "permissions": {
                 "can_edit": app.status == AppStatus.DRAFT,
                 "can_submit": app.status == AppStatus.DRAFT and member.can_sign,

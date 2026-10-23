@@ -1,7 +1,7 @@
 import { Check, X } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type InputHTMLAttributes, type ReactNode } from "react";
 import type { AppEvent, StatusView, TurnoverPoint } from "../api/types";
-import { dateTime, money, monthShort, moneyShort } from "../lib/format";
+import { dateTime, formatInputAmount, groupDigits, money, monthShort, moneyShort } from "../lib/format";
 
 export const PROCESSING = new Set(["SUBMITTED", "PRECHECK", "ENRICHMENT", "SCORING", "DECISION", "MANUAL_REVIEW", "DISBURSEMENT"]);
 
@@ -15,7 +15,7 @@ export function MiniTrack({ status, view }: { status: string; view: StatusView }
       {view.steps.map((_, i) => {
         let cls = "";
         if (status === "ISSUED" || i < view.step) cls = "done";
-        else if (i === view.step) cls = view.tone === "negative" ? "failed" : "current";
+        else if (i === view.step) cls = view.tone === "negative" ? "failed" : view.tone === "neutral" ? "stopped" : "current";
         return <i key={i} className={cls} />;
       })}
     </div>
@@ -63,7 +63,7 @@ export function Conveyor({
         {view.steps.map((s, i) => {
           let cls = "station";
           if (issued || i < view.step) cls += " done";
-          else if (i === view.step) cls += view.tone === "negative" ? " failed" : " current";
+          else if (i === view.step) cls += view.tone === "negative" ? " failed" : view.tone === "neutral" ? " stopped" : " current";
           if (i === view.step && (working || status === "MANUAL_REVIEW")) cls += " working";
           const icon = cls.includes("done") ? <Check size={15} strokeWidth={3} /> : cls.includes("failed") ? <X size={15} strokeWidth={3} /> : null;
           return (
@@ -96,6 +96,11 @@ export function Conveyor({
   );
 }
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Модальное окно: фокус переходит внутрь и не уходит за подложку, Escape закрывает,
+ *  после закрытия фокус возвращается туда, откуда окно открыли. */
 export function Modal({
   title,
   onClose,
@@ -109,14 +114,46 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
 }) {
+  const box = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const opener = document.activeElement as HTMLElement | null;
+    const el = box.current;
+    const field = el?.querySelector<HTMLElement>("input:not([disabled]), textarea:not([disabled]), select:not([disabled])");
+    (field ?? el)?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        close.current();
+        return;
+      }
+      if (e.key !== "Tab" || !el) return;
+      const items = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (!items.length) {
+        e.preventDefault();
+        el.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const inside = el.contains(document.activeElement);
+      if (e.shiftKey && (!inside || document.activeElement === first || document.activeElement === el)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (!inside || document.activeElement === last)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      if (opener && document.contains(opener)) opener.focus();
+    };
+  }, []);
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={box} tabIndex={-1} className={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="icon-btn" style={{ color: "var(--ink-2)" }} onClick={onClose} aria-label="Закрыть">
@@ -127,6 +164,59 @@ export function Modal({
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
     </div>
+  );
+}
+
+/** Поле суммы с разрядами. Курсор остаётся у той же цифры, когда разряды сдвигаются; если стереть первую
+ *  цифру, остальные не пропадают (её можно набрать заново), лишние нули убираются при уходе из поля. */
+export function AmountInput({
+  value,
+  onValueChange,
+  maxDigits = 13,
+  onBlur,
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
+  value: string;
+  onValueChange: (text: string) => void;
+  maxDigits?: number;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const caret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && caret.current !== null && document.activeElement === el) el.setSelectionRange(caret.current, caret.current);
+    caret.current = null;
+  });
+  return (
+    <input
+      {...rest}
+      ref={ref}
+      inputMode="numeric"
+      autoComplete="off"
+      value={value}
+      onChange={(e) => {
+        const raw = e.target.value;
+        const pos = e.target.selectionStart ?? raw.length;
+        const digits = raw.replace(/\D/g, "").slice(0, maxDigits);
+        const before = Math.min(raw.slice(0, pos).replace(/\D/g, "").length, digits.length);
+        const text = groupDigits(digits);
+        // курсор — сразу после той же по счёту цифры, что и до форматирования
+        let i = 0;
+        for (let seen = 0; i < text.length && seen < before; i++) if (/\d/.test(text[i])) seen++;
+        if (text === value) {
+          // введён не цифровой символ: значение не меняется, React вернёт прежний текст — курсор ставим сами
+          requestAnimationFrame(() => document.activeElement === ref.current && ref.current?.setSelectionRange(i, i));
+          return;
+        }
+        caret.current = i;
+        onValueChange(text);
+      }}
+      onBlur={(e) => {
+        const clean = formatInputAmount(value);
+        if (clean !== value) onValueChange(clean);
+        onBlur?.(e);
+      }}
+    />
   );
 }
 

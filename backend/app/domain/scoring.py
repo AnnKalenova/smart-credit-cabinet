@@ -115,10 +115,10 @@ class ScoringOutcome:
 
 def _fmt_money(v: float) -> str:
     if abs(v) >= 1_000_000:
-        return f"{v / 1_000_000:.1f} млн ₽".replace(".", ",")
+        return f"{v / 1_000_000:.1f}\u00a0млн\u00a0₽".replace(".", ",")
     if abs(v) >= 1_000:
-        return f"{v / 1_000:.0f} тыс. ₽"
-    return f"{v:.0f} ₽"
+        return f"{v / 1_000:.0f}\u00a0тыс.\u00a0₽"
+    return f"{v:.0f}\u00a0₽"
 
 
 def _pct(v: float) -> str:

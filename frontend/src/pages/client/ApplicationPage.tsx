@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
 import type { Application, Message } from "../../api/types";
-import { Conveyor, Field, Loader, Modal, PROCESSING, ProblemList, StatusChip, Timeline } from "../../components/ui";
+import { AmountInput, Conveyor, Field, Loader, Modal, PROCESSING, ProblemList, StatusChip, Timeline } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
-import { dateTime, formatInputAmount, money, parseAmount, relativeDue } from "../../lib/format";
+import { dateTime, money, parseAmount, relativeDue } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 import { ConditionsBuilder, useBuilderAvailable } from "./ConditionsBuilder";
 import { DocumentsBlock, useRefreshApp } from "./DocumentsBlock";
@@ -51,7 +51,7 @@ function ProcessingPanel({ app }: { app: Application }) {
         {PIPELINE.map((s) => {
           const st = stepState(app, s.key);
           return (
-            <div key={s.key} className="row small" style={{ opacity: st === "wait" ? 0.5 : 1 }}>
+            <div key={s.key} className={`row small ${st === "wait" ? "faint" : ""}`}>
               {st === "done" ? <CircleCheck size={18} className="pos" /> : st === "now" ? <span className="spin" style={{ margin: "0 2px" }} /> : <span style={{ width: 18 }} />}
               <span style={{ fontWeight: st === "now" ? 600 : 400 }}>{s.title}</span>
             </div>
@@ -130,18 +130,26 @@ function InfoRequestPanel({ app }: { app: Application }) {
           const key = i.field ?? i.code;
           // сумму и срок отправленной заявки меняет только тот, кто вправе подписывать
           const signerOnly = ["amount", "term_months"].includes(key) && !app.permissions.can_sign;
+          const isMoney = ["declared_revenue", "amount"].includes(key);
           return (
             <Field key={i.code} label={i.label} hint={signerOnly ? `Изменить сумму или срок может: ${app.permissions.signers.join(", ")}` : undefined}>
-              <input
-                className="input"
-                maxLength={200}
-                disabled={signerOnly}
-                value={fields[key] ?? ""}
-                onChange={(e) => {
-                  const v = ["declared_revenue", "amount"].includes(key) ? formatInputAmount(e.target.value) : e.target.value;
-                  setFields({ ...fields, [key]: v });
-                }}
-              />
+              {isMoney ? (
+                <AmountInput
+                  className="input input-money"
+                  maxDigits={15}
+                  disabled={signerOnly}
+                  value={fields[key] ?? ""}
+                  onValueChange={(v) => setFields((f) => ({ ...f, [key]: v }))}
+                />
+              ) : (
+                <input
+                  className="input"
+                  maxLength={200}
+                  disabled={signerOnly}
+                  value={fields[key] ?? ""}
+                  onChange={(e) => setFields({ ...fields, [key]: e.target.value })}
+                />
+              )}
             </Field>
           );
         })}
@@ -188,7 +196,12 @@ function ClosedPanel({ app }: { app: Application }) {
             </Link>
           ) : (
             app.permissions.can_reapply && (
-              <button className="btn btn-primary" style={{ marginTop: 16 }} disabled={reapply.isPending} onClick={() => reapply.mutate()}>
+              <button
+                className={`btn ${app.status === "DECLINED" ? "btn-ghost" : "btn-primary"}`}
+                style={{ marginTop: 16 }}
+                disabled={reapply.isPending}
+                onClick={() => reapply.mutate()}
+              >
                 <RotateCcw size={18} /> Подать новую заявку с этими данными
               </button>
             )
@@ -237,6 +250,7 @@ function Messages({ app }: { app: Application }) {
         <input
           className="input"
           placeholder="Сообщение специалисту"
+          aria-label="Сообщение специалисту банка"
           maxLength={4000}
           value={text}
           onChange={(e) => setText(e.target.value)}

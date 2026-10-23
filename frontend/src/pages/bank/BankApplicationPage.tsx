@@ -4,12 +4,22 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, download } from "../../api/client";
 import type { BankApplication, BankDecision, Message } from "../../api/types";
-import { Field, Grade, Loader, Timeline, TurnoverBars } from "../../components/ui";
+import { AmountInput, Field, Grade, Loader, Timeline, TurnoverBars } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
-import { date, dateTime, formatInputAmount, money, parseAmount, pct, relativeDue } from "../../lib/format";
+import { date, dateTime, formatInputAmount, money, parseAmount, pct, rateRange, relativeDue } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 
 const TABS = ["Сводка", "Скоринг", "Источники", "Документы и переписка", "Журнал"] as const;
+
+// журнал вызовов — человеческими словами, коды остаются в подсказке
+const SERVICE_LABEL: Record<string, string> = { EGRUL: "ЕГРЮЛ/ЕГРИП", FNS: "ФНС «Прозрачный бизнес»", BKI: "Бюро кредитных историй", ABS: "АБС банка" };
+const OPERATION_LABEL: Record<string, string> = {
+  get_extract: "Выписка о компании",
+  transparent_business: "Налоговые признаки и отчётность",
+  credit_report: "Кредитный отчёт по согласию",
+  open_loan_and_disburse: "Открытие ссудного счёта и выдача",
+};
+const CALL_STATUS_LABEL: Record<string, string> = { SUCCESS: "Успешно", ERROR: "Ошибка", TIMEOUT: "Нет ответа" };
 
 // ------------------------------------------------------------------ решение аналитика
 
@@ -119,13 +129,14 @@ function DecisionForm({ app }: { app: BankApplication }) {
                     <b className="small">Вариант {i + 1}</b>
                     <span className="spacer" />
                     {offers.length > 1 && (
-                      <button className="icon-btn" style={{ width: 28, height: 28, color: "var(--ink-3)" }} onClick={() => setOffers(offers.filter((_, j) => j !== i))} aria-label="Убрать вариант">
+                      <button className="icon-btn icon-btn-s" style={{ color: "var(--ink-3)" }} onClick={() => setOffers(offers.filter((_, j) => j !== i))} aria-label={`Убрать вариант ${i + 1}`}>
                         <Trash2 size={15} />
                       </button>
                     )}
                   </div>
                   <select
                     className="select"
+                    aria-label={`Продукт, вариант ${i + 1}`}
                     value={o.product_code}
                     onChange={(e) => {
                       const h = app.pricing_hints.find((x) => x.product_code === e.target.value);
@@ -139,7 +150,7 @@ function DecisionForm({ app }: { app: BankApplication }) {
                     ))}
                   </select>
                   <Field label="Сумма, ₽">
-                    <input className="input input-money" maxLength={17} value={o.amount} onChange={(e) => updateOffer(i, { amount: formatInputAmount(e.target.value) })} />
+                    <AmountInput className="input input-money" value={o.amount} onValueChange={(v) => updateOffer(i, { amount: v })} />
                   </Field>
                   <div className="row">
                     <Field label="Срок, мес.">
@@ -151,7 +162,7 @@ function DecisionForm({ app }: { app: BankApplication }) {
                   </div>
                   {hint && (
                     <span className="xs faint">
-                      {money(hint.min_amount)}–{money(hint.max_amount)}, {hint.min_term}–{hint.max_term} мес., ставка {pct(hint.min_rate)}–{pct(hint.max_rate)}, по политике{" "}
+                      {money(hint.min_amount)}–{money(hint.max_amount)}, {hint.min_term}–{hint.max_term} мес., ставка {rateRange(hint.min_rate, hint.max_rate)}, по политике{" "}
                       {pct(hint.default_rate)}
                     </span>
                   )}
@@ -607,7 +618,7 @@ function DocsAndChat({ app }: { app: BankApplication }) {
           ))}
         </div>
         <div className="row" style={{ marginTop: 12 }}>
-          <input className="input" placeholder="Сообщение клиенту" maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && text.trim() && send.mutate()} />
+          <input className="input" placeholder="Сообщение клиенту" aria-label="Сообщение клиенту" maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && text.trim() && send.mutate()} />
           <button className="btn btn-primary" disabled={!text.trim()} onClick={() => send.mutate()} aria-label="Отправить">
             <Send size={17} />
           </button>
@@ -644,12 +655,12 @@ function Journal({ app }: { app: BankApplication }) {
               {app.integration_calls.map((c, i) => (
                 <tr key={i}>
                   <td className="nowrap">{dateTime(c.created_at)}</td>
-                  <td>
-                    {c.service}
-                    <div className="xs faint">{c.operation}</div>
+                  <td title={`${c.service} / ${c.operation}`}>
+                    {SERVICE_LABEL[c.service] ?? c.service}
+                    <div className="xs faint">{OPERATION_LABEL[c.operation] ?? c.operation}</div>
                   </td>
                   <td className={c.status === "SUCCESS" ? "pos" : "neg"}>
-                    {c.status}
+                    {CALL_STATUS_LABEL[c.status] ?? c.status}
                     {c.error ? <div className="xs faint">{c.error}</div> : null}
                   </td>
                   <td className="r">{c.duration_ms}</td>

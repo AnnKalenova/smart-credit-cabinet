@@ -34,6 +34,20 @@ export function ClientHome() {
 
   if (!me || !company) return <Loader />;
   const p = profile.data;
+  // предварительно одобренный лимит — главная цифра клиента: на телефоне она идёт первой, до списков
+  const hero = (where: string) =>
+    p?.preapproved && (
+      <section className={`hero-limit ${where}`} aria-label="Предварительно одобренный лимит">
+        <div className="label">{p.preapproved.product_name}, предварительно одобрено</div>
+        <div className="big">{moneyShort(p.preapproved.amount)}</div>
+        <p>
+          Ставка от {pct(p.preapproved.rate_from)} годовых, срок до {p.preapproved.max_term} мес. {p.preapproved.note}
+        </p>
+        <button className="btn btn-white" onClick={() => nav(`/c/match?purpose=OTHER&amount=${p.preapproved!.amount}&term=12`)}>
+          Посмотреть условия
+        </button>
+      </section>
+    );
 
   return (
     <>
@@ -52,6 +66,7 @@ export function ClientHome() {
 
       <div className="grid-2">
         <div className="stack">
+          {hero("only-narrow")}
           <section className="panel">
             <div className="panel-head">
               <h2>Заявки</h2>
@@ -123,18 +138,7 @@ export function ClientHome() {
         </div>
 
         <aside className="stack">
-          {p?.preapproved && (
-            <section className="hero-limit" aria-label="Предварительно одобренный лимит">
-              <div className="label">{p.preapproved.product_name}, предварительно одобрено</div>
-              <div className="big">{moneyShort(p.preapproved.amount)}</div>
-              <p>
-                Ставка от {pct(p.preapproved.rate_from)} годовых, срок до {p.preapproved.max_term} мес. {p.preapproved.note}
-              </p>
-              <button className="btn btn-white" onClick={() => nav(`/c/match?purpose=OTHER&amount=${p.preapproved!.amount}&term=12`)}>
-                Посмотреть условия
-              </button>
-            </section>
-          )}
+          {hero("only-wide")}
 
           <section className="panel">
             <h3>Поступления на счёт</h3>

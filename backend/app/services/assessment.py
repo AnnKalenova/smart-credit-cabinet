@@ -236,7 +236,10 @@ def match_products(
     term_months: int,
     key_rate: float,
     as_of: date,
+    has_collateral: bool | None = None,
+    owner_guarantee: bool = False,
 ) -> list[dict]:
+    """Подбор продуктов. Залог и поручительство — если клиент их уже указал (расчёт в черновике)."""
     stats = company_turnover(db, company.id)
     tenure = months_between(company.client_since, as_of)
     own = own_obligations(db, company.id)
@@ -246,9 +249,10 @@ def match_products(
         if purpose not in params.purposes:
             continue
         term = min(max(term_months, params.min_term), params.max_term)
-        rate_best, _ = price(params, "A", key_rate, params.collateral == "REQUIRED", False, tenure)
-        rate_typical, _ = price(params, "B", key_rate, params.collateral == "REQUIRED", False, tenure)
-        rate_worst, _ = price(params, "C", key_rate, params.collateral == "REQUIRED", False, tenure)
+        pledge = params.collateral == "REQUIRED" if has_collateral is None else pledged(p, has_collateral)
+        rate_best, _ = price(params, "A", key_rate, pledge, owner_guarantee, tenure)
+        rate_typical, _ = price(params, "B", key_rate, pledge, owner_guarantee, tenure)
+        rate_worst, _ = price(params, "C", key_rate, pledge, owner_guarantee, tenure)
         limit, _ = max_limit(params, "B", rate_typical, term, stats.avg_monthly, own)
         limit = min(limit, int(params.max_amount))
         fit_amount = min(max(amount, params.min_amount), params.max_amount)

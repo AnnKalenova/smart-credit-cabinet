@@ -148,7 +148,7 @@ def seed(db: Session) -> bool:
     sync_products(db)
     for key, (value, description) in DEFAULT_SETTINGS.items():
         if db.get(Setting, key) is None:
-            db.add(Setting(key=key, value=value, description=description, updated_by="Начальная настройка"))
+            db.add(Setting(key=key, value=value, description=description, updated_by="при начальной настройке"))
     if not settings.demo_mode:
         # вне демо-режима демо-учётки с общеизвестным паролем не создаются: пользователи приходят через SSO банка
         db.commit()

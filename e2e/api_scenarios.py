@@ -131,10 +131,19 @@ def scenario_conditions_builder(base: str) -> str:
     assert app["decision"]["outcome"] == "COUNTER_OFFER", app["decision"]
     sim = c.req("POST", f"/api/v1/applications/{app['id']}/simulation", json={})
     assert sim["result"]["outcome"] == "COUNTER_OFFER", sim["result"]
+    # условия из предложения банка конструктор узнаёт: их выбирают без новой заявки
+    offer = app["offers"][0]
+    same = c.req(
+        "POST",
+        f"/api/v1/applications/{app['id']}/simulation",
+        json={"amount": offer["amount"], "term_months": offer["term_months"], "with_suggestions": False},
+    )
+    assert same["result"]["offer"]["id"] == offer["id"], same["result"]
     best = next(s for s in sim["suggestions"] if s["result"]["outcome"] == "APPROVE")
-    c.req("POST", f"/api/v1/applications/{app['id']}/offers/decline")
-    new = c.req("POST", f"/api/v1/applications/{app['id']}/reapply", json=best["params"])
+    # отказ от предложения и новая заявка — одним действием
+    new = c.req("POST", f"/api/v1/applications/{app['id']}/reapply", json={**best["params"], "replace_current": True})
     assert new["parent_id"] == app["id"] and new["term_months"] == best["params"]["term_months"], new
+    assert c.req("GET", f"/api/v1/applications/{app['id']}")["status"] == "CLIENT_DECLINED"
     ch = c.req("POST", f"/api/v1/applications/{new['id']}/sign-challenges", json={"purpose": "CONSENTS"})
     c.req(
         "POST",

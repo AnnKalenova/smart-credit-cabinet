@@ -107,7 +107,7 @@ function DocRow({ app, doc, editable }: { app: Application; doc: DocumentInfo; e
       <span className="faint">{fileSize(doc.size_bytes)}</span>
       <span className="spacer" />
       {editable && (
-        <button className="icon-btn" style={{ width: 30, height: 30, color: "var(--ink-3)" }} onClick={remove} aria-label="Удалить документ">
+        <button className="icon-btn icon-btn-s" style={{ color: "var(--ink-3)" }} onClick={remove} aria-label={`Удалить документ ${doc.file_name}`}>
           <Trash2 size={15} />
         </button>
       )}

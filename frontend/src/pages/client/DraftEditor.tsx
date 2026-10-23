@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api/client";
 import type { Application, CompanyProfile, MatchResult, Product } from "../../api/types";
 import { SignDialog } from "../../components/SignDialog";
-import { Field, ProblemList } from "../../components/ui";
+import { AmountInput, Field, ProblemList } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
-import { date, formatInputAmount, money, parseAmount } from "../../lib/format";
+import { date, formatInputAmount, money, parseAmount, rateRange } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 import { DocumentsBlock, useRefreshApp } from "./DocumentsBlock";
 
@@ -197,7 +197,7 @@ export function DraftEditor({ app }: { app: Application }) {
             }
           >
             <div className="input-group">
-              <input className="input input-money" inputMode="numeric" maxLength={17} value={d.amount} onChange={(e) => set("amount", formatInputAmount(e.target.value))} />
+              <AmountInput className="input input-money" value={d.amount} onValueChange={(v) => set("amount", v)} />
               <span className="suffix">₽</span>
             </div>
           </Field>
@@ -252,13 +252,7 @@ export function DraftEditor({ app }: { app: Application }) {
             hint={p ? `Мы подставили оценку по поступлениям на ваш счёт. Если часть выручки идёт в другой банк — укажите всю.` : undefined}
           >
             <div className="input-group">
-              <input
-                className="input input-money"
-                inputMode="numeric"
-                maxLength={19}
-                value={d.declared_revenue}
-                onChange={(e) => set("declared_revenue", formatInputAmount(e.target.value))}
-              />
+              <AmountInput className="input input-money" maxDigits={15} value={d.declared_revenue} onValueChange={(v) => set("declared_revenue", v)} />
               <span className="suffix">₽</span>
             </div>
           </Field>
@@ -272,33 +266,32 @@ export function DraftEditor({ app }: { app: Application }) {
         </div>
       </section>
 
-      {product.collateral !== "NONE" && (
-        <section className="panel">
-          <h2>Обеспечение</h2>
-          <div className="stack" style={{ marginTop: 12 }}>
-            {product.collateral === "REQUIRED" ? (
-              <div className="callout info">
-                <ShieldCheck size={18} />
-                <span>Покупаемое имущество оформляется в залог — поэтому ставка по этому кредиту ниже.</span>
-              </div>
-            ) : (
-              <label className="check">
-                <input type="checkbox" checked={d.has_collateral} onChange={(e) => set("has_collateral", e.target.checked, true)} />
-                <span>Готовы предоставить залог (недвижимость, транспорт, оборудование) — снижает ставку на 1 п.п.</span>
-              </label>
-            )}
-            {(product.collateral === "REQUIRED" || d.has_collateral) && (
-              <Field label="Что будет в залоге" hint="Что это, у кого покупаете, примерная стоимость">
-                <textarea className="textarea" maxLength={400} value={d.collateral_description} onChange={(e) => set("collateral_description", e.target.value)} />
-              </Field>
-            )}
+      <section className="panel">
+        <h2>Обеспечение</h2>
+        <div className="stack" style={{ marginTop: 12 }}>
+          {product.collateral === "REQUIRED" && (
+            <div className="callout info">
+              <ShieldCheck size={18} />
+              <span>Покупаемое имущество оформляется в залог — поэтому ставка по этому кредиту ниже.</span>
+            </div>
+          )}
+          {product.collateral === "OPTIONAL" && (
             <label className="check">
-              <input type="checkbox" checked={d.owner_guarantee} onChange={(e) => set("owner_guarantee", e.target.checked, true)} />
-              <span>Собственник бизнеса готов выступить поручителем — снижает ставку на 0,5 п.п.</span>
+              <input type="checkbox" checked={d.has_collateral} onChange={(e) => set("has_collateral", e.target.checked, true)} />
+              <span>Готовы предоставить залог (недвижимость, транспорт, оборудование) — снижает ставку на 1 п.п.</span>
             </label>
-          </div>
-        </section>
-      )}
+          )}
+          {product.collateral !== "NONE" && (product.collateral === "REQUIRED" || d.has_collateral) && (
+            <Field label="Что будет в залоге" hint="Что это, у кого покупаете, примерная стоимость">
+              <textarea className="textarea" maxLength={400} value={d.collateral_description} onChange={(e) => set("collateral_description", e.target.value)} />
+            </Field>
+          )}
+          <label className="check">
+            <input type="checkbox" checked={d.owner_guarantee} onChange={(e) => set("owner_guarantee", e.target.checked, true)} />
+            <span>Собственник бизнеса готов выступить поручителем — снижает ставку на 0,5 п.п.</span>
+          </label>
+        </div>
+      </section>
 
       <section className="panel">
         <h2>Документы</h2>
@@ -364,11 +357,19 @@ export function DraftEditor({ app }: { app: Application }) {
 /** Предварительный расчёт в черновике: меняется вместе с параметрами заявки. */
 export function DraftEstimate({ app }: { app: Application }) {
   const est = useQuery({
-    queryKey: ["estimate", app.id, app.product_code, app.amount, app.term_months, app.purpose],
+    queryKey: ["estimate", app.id, app.product_code, app.amount, app.term_months, app.purpose, app.has_collateral, app.owner_guarantee],
     queryFn: () =>
       api<{ key_rate: number; results: MatchResult[] }>("/api/v1/products/match", {
         method: "POST",
-        json: { company_id: app.company_id, purpose: app.purpose, amount: app.amount, term_months: app.term_months },
+        json: {
+          company_id: app.company_id,
+          purpose: app.purpose,
+          amount: app.amount,
+          term_months: app.term_months,
+          // залог и поручительство снижают ставку — расчёт совпадает с конструктором условий
+          has_collateral: app.has_collateral,
+          owner_guarantee: app.owner_guarantee,
+        },
       }),
   });
   const r = est.data?.results.find((x) => x.product_code === app.product_code);
@@ -382,7 +383,7 @@ export function DraftEstimate({ app }: { app: Application }) {
           <div>
             <div className="xs faint">Ставка</div>
             <div className="num" style={{ fontSize: 19 }}>
-              {r.rate_from.toLocaleString("ru-RU")}–{r.rate_to.toLocaleString("ru-RU")}%
+              {rateRange(r.rate_from, r.rate_to)}
             </div>
           </div>
           <div>

@@ -105,10 +105,15 @@ async def counter_offer_view(page: Page, base: str) -> None:
     await page.wait_for_selector("text=Выберите вариант")
     await shot(page, "11-counter-offer")
 
-    # конструктор условий: подсказка «Срок 18 мес.» — и банк одобряет автоматически
+    # конструктор условий: подсказка, при которой банк одобряет автоматически (варианты банка в подсказках
+    # не повторяются — их выбирают в самом предложении)
     builder = page.locator("section", has=page.get_by_role("heading", name="Конструктор условий"))
     await builder.locator(".verdict-title").wait_for()
-    await builder.locator(".suggestion", has_text="Срок 18 мес.").get_by_role("button", name="Применить").click()
+    await (
+        builder.locator(".suggestion", has_text="Одобрим автоматически")
+        .first.get_by_role("button", name="Применить")
+        .click()
+    )
     await page.wait_for_function(
         "() => document.querySelector('.verdict-title')?.textContent === 'Одобрим автоматически'", timeout=15_000
     )

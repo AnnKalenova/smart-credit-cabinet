@@ -127,7 +127,7 @@ export interface StatusView {
   title: string;
   now: string;
   next: string;
-  tone: "progress" | "action" | "positive" | "negative";
+  tone: "progress" | "action" | "positive" | "negative" | "neutral";
   step: number;
   steps: string[];
   is_final: boolean;
@@ -287,6 +287,8 @@ export interface Application extends ApplicationSummary {
   review_due_at: string | null;
   parent_id: string | null;
   next_application: { id: string; number: string; status: string; status_title: string; is_live: boolean } | null;
+  /** Условия, которые сотрудник без права подписи передал руководителю из конструктора. */
+  proposed_conditions: { conditions: Conditions; text: string; by: string | null; at: string } | null;
 }
 
 // ------------------------------------------------------------------ конструктор условий
@@ -328,6 +330,10 @@ export interface SimResult extends Conditions {
     is_counter: boolean;
   }[];
   key_rate: number;
+  /** Условия совпадают с действующим предложением банка — его выбирают без новой заявки. */
+  offer: { id: string; label: string; rate: number; monthly_payment: number } | null;
+  /** Что останется сделать в новой заявке, кроме согласий и отправки. */
+  todo: string[];
 }
 
 export interface SimProduct {

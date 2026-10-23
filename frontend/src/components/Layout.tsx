@@ -21,19 +21,33 @@ function Notifications() {
     mutationFn: () => api("/api/v1/notifications/read-all", { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["notifications"] }),
   });
+  const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    // Escape закрывает список и возвращает фокус на колокольчик
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && ref.current?.querySelector(".dropdown")) {
+        setOpen(false);
+        button.current?.focus();
+      }
+    };
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
   }, []);
   const unread = data?.unread ?? 0;
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button
+        ref={button}
         className="icon-btn"
         aria-label={`Уведомления${unread ? `: ${unread} новых` : ""}`}
+        aria-expanded={open}
         onClick={() => {
           setOpen((o) => !o);
           if (!open && unread) readAll.mutate();

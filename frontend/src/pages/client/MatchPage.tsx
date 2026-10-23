@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Application, MatchResult } from "../../api/types";
-import { Loader } from "../../components/ui";
+import { AmountInput, Loader } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
-import { formatInputAmount, money, moneyShort, parseAmount, pct } from "../../lib/format";
+import { formatInputAmount, money, moneyShort, parseAmount, pct, rateRange } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 
 const TERMS = [3, 6, 9, 12, 18, 24, 36, 48, 60, 84];
@@ -95,20 +95,12 @@ export function MatchPage() {
             <div className="field">
               <label htmlFor="amount">Сумма</label>
               <div className="input-group">
-                <input
-                  id="amount"
-                  className="input input-money"
-                  inputMode="numeric"
-                  maxLength={17}
-                  value={amountText}
-                  placeholder="1 000 000"
-                  onChange={(e) => setAmountText(formatInputAmount(e.target.value))}
-                />
+                <AmountInput id="amount" className="input input-money" value={amountText} placeholder="1 000 000" onValueChange={setAmountText} />
                 <span className="suffix">₽</span>
               </div>
               <div className="presets">
                 {PRESETS.map((v) => (
-                  <button key={v} onClick={() => setAmountText(formatInputAmount(v))}>
+                  <button key={v} type="button" onClick={() => setAmountText(formatInputAmount(v))}>
                     {moneyShort(v)}
                   </button>
                 ))}
@@ -175,7 +167,7 @@ export function MatchPage() {
                 <div>
                   <div className="xs faint">Ставка</div>
                   <div className="val">
-                    {pct(r.rate_from)} – {pct(r.rate_to)}
+                    {rateRange(r.rate_from, r.rate_to)}
                   </div>
                   <div className="xs faint">точная — после оценки</div>
                 </div>

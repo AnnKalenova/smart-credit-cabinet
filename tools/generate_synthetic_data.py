@@ -109,7 +109,7 @@ COMPANIES = [
             "current_overdue_days": 0,
             "loans": [
                 {
-                    "creditor": "Банк «Восток» (синтетический)",
+                    "creditor": "Банк «Восток»",
                     "type": "Кредит на оборудование",
                     "amount": 2_500_000,
                     "outstanding": 620_000,
@@ -200,7 +200,7 @@ COMPANIES = [
             "current_overdue_days": 0,
             "loans": [
                 {
-                    "creditor": "Банк «Ока» (синтетический)",
+                    "creditor": "Банк «Ока»",
                     "type": "Кредит на развитие бизнеса",
                     "amount": 2_000_000,
                     "outstanding": 1_150_000,
@@ -210,7 +210,7 @@ COMPANIES = [
                     "max_overdue_days_12m": 0,
                 },
                 {
-                    "creditor": "Лизинговая компания «Опора» (синтетическая)",
+                    "creditor": "Лизинговая компания «Опора»",
                     "type": "Лизинг оборудования",
                     "amount": 3_400_000,
                     "outstanding": 2_300_000,
@@ -220,7 +220,7 @@ COMPANIES = [
                     "max_overdue_days_12m": 0,
                 },
                 {
-                    "creditor": "Банк «Ока» (синтетический)",
+                    "creditor": "Банк «Ока»",
                     "type": "Автокредит (физлицо)",
                     "amount": 1_800_000,
                     "outstanding": 950_000,
@@ -307,7 +307,7 @@ COMPANIES = [
             "current_overdue_days": 0,
             "loans": [
                 {
-                    "creditor": "Лизинговая компания «Станок-Финанс» (синтетическая)",
+                    "creditor": "Лизинговая компания «Станок-Финанс»",
                     "type": "Лизинг",
                     "amount": 9_800_000,
                     "outstanding": 3_200_000,
@@ -338,7 +338,7 @@ COMPANIES = [
     },
     {
         "key": "stroy",
-        "scenario": "Ручное рассмотрение: повышенный риск",
+        "scenario": "Ручное рассмотрение, повышенный риск",
         "scenario_hint": "Оборотный кредит 8 млн ₽ на 18 мес. под контракт — налоговый долг и смена директора, решает аналитик",
         "inn": inn_legal(41207),
         "ogrn": ogrn(2022, 41207),
@@ -393,7 +393,7 @@ COMPANIES = [
             "current_overdue_days": 0,
             "loans": [
                 {
-                    "creditor": "Банк «Волга» (синтетический)",
+                    "creditor": "Банк «Волга»",
                     "type": "Кредитная линия",
                     "amount": 6_000_000,
                     "outstanding": 3_900_000,
@@ -403,7 +403,7 @@ COMPANIES = [
                     "max_overdue_days_12m": 18,
                 },
                 {
-                    "creditor": "Банк «Ока» (синтетический)",
+                    "creditor": "Банк «Ока»",
                     "type": "Кредит на спецтехнику",
                     "amount": 4_200_000,
                     "outstanding": 2_100_000,

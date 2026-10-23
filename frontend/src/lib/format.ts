@@ -1,24 +1,34 @@
 const rub = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
 const rub2 = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const NBSP = "\u00a0";
+
+/** Сумма: разряды и знак рубля — через неразрывный пробел, чтобы строка не переносилась внутри числа. */
 export function money(v: number | null | undefined, cents = false): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
-  return `${(cents ? rub2 : rub).format(v)} ₽`;
+  return `${(cents ? rub2 : rub).format(v)}${NBSP}₽`;
 }
 
 export function moneyShort(v: number): string {
   if (Math.abs(v) >= 1_000_000) {
     const m = v / 1_000_000;
-    return `${m.toLocaleString("ru-RU", { maximumFractionDigits: m >= 10 ? 1 : 2 })} млн ₽`;
+    return `${m.toLocaleString("ru-RU", { maximumFractionDigits: m >= 10 ? 1 : 2 })}${NBSP}млн${NBSP}₽`;
   }
-  if (Math.abs(v) >= 1_000) return `${Math.round(v / 1_000).toLocaleString("ru-RU")} тыс. ₽`;
-  return `${Math.round(v)} ₽`;
+  if (Math.abs(v) >= 1_000) return `${Math.round(v / 1_000).toLocaleString("ru-RU")}${NBSP}тыс.${NBSP}₽`;
+  return `${Math.round(v)}${NBSP}₽`;
 }
 
 /** Проценты без лишнего нуля: «22%», «21,5%». */
 export function pct(v: number | null | undefined, digits = 1): string {
   if (v === null || v === undefined) return "—";
   return `${v.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: digits })}%`;
+}
+
+/** Диапазон ставок одним видом везде: «20,5–23%». */
+export function rateRange(from: number, to: number): string {
+  if (Math.abs(from - to) < 0.05) return pct(from);
+  const f = (v: number) => v.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
+  return `${f(from)}–${f(to)}%`;
 }
 
 export function date(v: string | null | undefined): string {
@@ -63,12 +73,18 @@ export function relativeDue(v: string | null): { text: string; overdue: boolean 
 }
 
 export function fileSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
-  return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}${NBSP}МБ`;
+  return `${Math.max(1, Math.round(bytes / 1024))}${NBSP}КБ`;
 }
 
 export function parseAmount(s: string): number {
   return Number(s.replace(/\s/g, "").replace(",", ".")) || 0;
+}
+
+/** Цифры по три через неразрывный пробел: «1000000» → «1 000 000». Ведущие нули сохраняются —
+ *  пока человек редактирует поле, стёртая первая цифра не уничтожает остальные. */
+export function groupDigits(digits: string): string {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
 }
 
 export function formatInputAmount(v: number | string): string {

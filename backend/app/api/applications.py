@@ -50,12 +50,13 @@ from app.schemas import (
     ApplicationOut,
     ApplicationSummaryOut,
     ApplicationUpdate,
-    ConditionsIn,
     ContractOut,
     DocumentOut,
     InfoResponseIn,
     MessageIn,
     MessageOut,
+    ReapplyIn,
+    SignatureRequestIn,
     SignChallengeIn,
     SignChallengeOut,
     SignConfirmIn,
@@ -64,7 +65,7 @@ from app.schemas import (
 )
 from app.security import get_client_application, hash_code, require_company_member, require_roles
 from app.services import assessment, storage
-from app.services.simulation import Params, SimulationError, Simulator
+from app.services.simulation import SimulationError, Simulator, describe
 from app.services.views import (
     application_out,
     can_cancel,
@@ -103,6 +104,8 @@ EDITABLE_FIELDS = {
     "contact_phone",
 }
 SIGN_CODES_PER_10_MIN = 10
+# Открытые заявки, которые можно заменить новой одним действием (повторная подача с replace_current)
+REPLACEABLE = (AppStatus.OFFER_READY, AppStatus.MANUAL_REVIEW)
 MAX_DOCUMENTS_PER_APPLICATION = 20
 INFO_EDITABLE_FIELDS = {
     "declared_revenue",
@@ -467,10 +470,47 @@ def sign_consents(
 @router.post(
     "/{app_id}/request-signature", response_model=ApplicationOut, summary="Передать заявку руководителю на подпись"
 )
-def request_signature(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
+def request_signature(
+    app_id: uuid.UUID,
+    body: SignatureRequestIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(client_only),
+):
+    """Сотрудник без права подписи передаёт заявку руководителю. С условиями из конструктора — предлагает
+    подать новую заявку на них: руководитель откроет заявку, и конструктор покажет эти условия."""
     app, member = get_client_application(db, user, app_id)
     if member.can_sign:
         raise HTTPException(status.HTTP_409_CONFLICT, "У вас есть право подписи — подпишите сами")
+    position = POSITION_LABELS.get(member.position, member.position).lower()
+    if body is not None and body.conditions is not None:
+        _require_status(app, AppStatus.OFFER_READY, AppStatus.MANUAL_REVIEW)
+        try:
+            sim = Simulator(db, app)
+            params = sim.params(**body.conditions.model_dump())
+            product = sim.validate(params)
+        except SimulationError as e:
+            code = status.HTTP_409_CONFLICT if e.unavailable else status.HTTP_422_UNPROCESSABLE_CONTENT
+            raise HTTPException(code, str(e)) from e
+        text = describe(product, params)
+        notify_company(
+            db,
+            app,
+            f"Новые условия по заявке № {app.number}",
+            f"{user.full_name} ({position}) предлагает подать новую заявку: {text}. "
+            "Откройте заявку — условия уже в конструкторе.",
+            signers_only=True,
+        )
+        add_event(
+            db,
+            app,
+            "CONDITIONS_PROPOSED",
+            f"Руководителю переданы условия для новой заявки: {text}",
+            actor_type=ActorType.CLIENT,
+            actor_id=user.id,
+            payload={"conditions": params.to_dict(), "text": text},
+        )
+        _commit(db)
+        return _out(db, app, member)
     _require_status(app, AppStatus.DRAFT, AppStatus.OFFER_READY, AppStatus.SIGNING)
     what = {
         AppStatus.DRAFT: "подписать согласия и отправить заявку",
@@ -481,7 +521,7 @@ def request_signature(app_id: uuid.UUID, db: Session = Depends(get_db), user: Us
         db,
         app,
         f"Нужна ваша подпись: заявка № {app.number}",
-        f"{user.full_name} ({POSITION_LABELS.get(member.position, member.position).lower()}) просит {what}.",
+        f"{user.full_name} ({position}) просит {what}.",
         signers_only=True,
     )
     add_event(
@@ -615,14 +655,18 @@ def cancel(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depend
         raise HTTPException(status.HTTP_409_CONFLICT, "Заявку уже нельзя отозвать")
     if not can_cancel(app, member):
         _require_signer(member, "Отозвать заявку", hint=False)
+    _withdraw(db, app, user)
+    _commit(db)
+    return _out(db, app, member)
+
+
+def _withdraw(db: Session, app: Application, user: User, title: str | None = None) -> None:
     for req in db.scalars(
         select(InfoRequest).where(InfoRequest.application_id == app.id, InfoRequest.status == InfoRequestStatus.OPEN)
     ):
         req.status = InfoRequestStatus.CANCELLED
-    title = "Черновик отменён" if app.status == AppStatus.DRAFT else "Заявка отозвана клиентом"
+    title = title or ("Черновик отменён" if app.status == AppStatus.DRAFT else "Заявка отозвана клиентом")
     transition(db, app, AppStatus.CANCELLED, actor_type=ActorType.CLIENT, actor_id=user.id, title=title)
-    _commit(db)
-    return _out(db, app, member)
 
 
 # --------------------------------------------------------------------------- предложение и подписание
@@ -661,26 +705,26 @@ def decline_offers(app_id: uuid.UUID, db: Session = Depends(get_db), user: User 
     app, member = get_client_application(db, user, app_id)
     _require_signer(member, "Отказаться от предложения", hint=False)
     _require_status(app, AppStatus.OFFER_READY)
+    if not _decline_offers(db, app, user):
+        _commit(db)
+        raise HTTPException(status.HTTP_409_CONFLICT, "Срок действия предложения уже истёк")
+    _commit(db)
+    return _out(db, app, member)
+
+
+def _decline_offers(db: Session, app: Application, user: User, title: str = "Отказ от предложения") -> bool:
+    """Отказ от предложения. False — если оно уже истекло: заявка закрывается как истёкшая."""
     active = list(db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE)))
     if active and all(o.valid_until < utcnow() for o in active):
         # так же, как при попытке принять: истёкшее предложение закрывается как истёкшее
         for o in active:
             o.status = OfferStatus.EXPIRED
         transition(db, app, AppStatus.EXPIRED, title="Срок действия предложения истёк")
-        _commit(db)
-        raise HTTPException(status.HTTP_409_CONFLICT, "Срок действия предложения уже истёк")
+        return False
     for o in active:
         o.status = OfferStatus.DECLINED
-    transition(
-        db,
-        app,
-        AppStatus.CLIENT_DECLINED,
-        actor_type=ActorType.CLIENT,
-        actor_id=user.id,
-        title="Отказ от предложения",
-    )
-    _commit(db)
-    return _out(db, app, member)
+    transition(db, app, AppStatus.CLIENT_DECLINED, actor_type=ActorType.CLIENT, actor_id=user.id, title=title)
+    return True
 
 
 @router.post("/{app_id}/signing/back", response_model=ApplicationOut, summary="Вернуться к выбору условий")
@@ -804,17 +848,26 @@ def sign_contract(
     "/{app_id}/reapply",
     response_model=ApplicationOut,
     status_code=201,
-    summary="Подать новую заявку на основе закрытой",
+    summary="Подать новую заявку на основе этой (закрытой — или закрыть её и подать одним действием)",
 )
 def reapply(
     app_id: uuid.UUID,
-    conditions: ConditionsIn | None = None,
+    conditions: ReapplyIn | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(client_only),
 ):
-    parent, _ = get_client_application(db, user, app_id)
-    _require_status(parent, AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED)
+    parent, parent_member = get_client_application(db, user, app_id)
     lock_key(db, f"reapply:{parent.id}")  # две одновременные кнопки не создадут две заявки
+    db.refresh(parent)
+    replace = bool(conditions and conditions.replace_current) and parent.status in REPLACEABLE
+    if replace:
+        # отказ от предложения и отзыв — те же права, что и у отдельных кнопок
+        if parent.status == AppStatus.OFFER_READY:
+            _require_signer(parent_member, "Отказаться от предложения", hint=False)
+        elif not can_cancel(parent, parent_member):
+            _require_signer(parent_member, "Отозвать заявку", hint=False)
+    else:
+        _require_status(parent, AppStatus.DECLINED, AppStatus.EXPIRED, AppStatus.CLIENT_DECLINED, AppStatus.CANCELLED)
     live = db.scalar(
         select(Application.number)
         .where(Application.parent_id == parent.id, Application.status.not_in([s.value for s in TERMINAL_STATUSES]))
@@ -824,7 +877,7 @@ def reapply(
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"По этой заявке уже создана новая — № {live}. Откройте её в списке заявок"
         )
-    c = conditions or ConditionsIn()
+    c = conditions or ReapplyIn()
     if c.product_code:
         product = db.get(Product, c.product_code)
         if product is None or not product.is_active or parent.purpose not in product.purposes:
@@ -850,6 +903,12 @@ def reapply(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 f"Срок по продукту «{product.name}» — {months_range(product.min_term, product.max_term)}",
             )
+    if replace:
+        # текущая заявка закрывается в той же транзакции: без новой заявки она не закроется, и наоборот
+        if parent.status == AppStatus.OFFER_READY:
+            _decline_offers(db, parent, user, title="Отказ от предложения: клиент подаёт заявку на других условиях")
+        else:
+            _withdraw(db, parent, user, title="Заявка отозвана: клиент подаёт её на других условиях")
     app, member = _new_application(db, user, body, parent)
     # условия из конструктора: залог и поручительство, если клиент их выбрал
     if c.owner_guarantee is not None:
@@ -900,13 +959,7 @@ def simulation(app_id: uuid.UUID, body: SimulationIn, db: Session = Depends(get_
     try:
         sim = Simulator(db, app)
         base = sim.base_params()
-        params = Params(
-            product_code=body.product_code or base.product_code,
-            amount=body.amount if body.amount is not None else base.amount,
-            term_months=body.term_months or base.term_months,
-            has_collateral=base.has_collateral if body.has_collateral is None else body.has_collateral,
-            owner_guarantee=base.owner_guarantee if body.owner_guarantee is None else body.owner_guarantee,
-        )
+        params = sim.params(**body.model_dump(exclude={"with_suggestions"}))
         result = sim.run(params)
         suggestions = sim.suggestions(params, result) if body.with_suggestions else []
     except SimulationError as e:

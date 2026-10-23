@@ -92,7 +92,7 @@ async def egrul(inn: str):
     e = c["egrul"]
     director = {**e["director"], "since": rel_date(e["director"].get("since"))}
     result = {
-        "source": "ЕГРЮЛ/ЕГРИП (симулятор)",
+        "source": "ЕГРЮЛ/ЕГРИП",
         "extract_id": uuid.uuid4().hex[:12],
         "extracted_at": datetime.now(UTC).isoformat(),
         "inn": c["inn"],
@@ -123,7 +123,7 @@ async def fns(inn: str):
     await simulate("FNS")
     c = company_or_404(inn)
     return {
-        "source": "ФНС «Прозрачный бизнес» (симулятор)",
+        "source": "ФНС «Прозрачный бизнес»",
         "inn": c["inn"],
         "reporting_year": date.today().year - 1,
         **c["fns"],
@@ -146,7 +146,7 @@ async def bki(body: BkiRequest):
     report_id = uuid.uuid4().hex[:16]
     if c is None:
         return {
-            "source": "БКИ (симулятор)",
+            "source": "БКИ",
             "report_id": report_id,
             "inn": body.inn,
             "found": False,
@@ -158,7 +158,7 @@ async def bki(body: BkiRequest):
     loans = [{**ln, "opened": rel_date(ln.get("opened"))} for ln in b["loans"]]
     active = [ln for ln in loans if ln["status"] == "ACTIVE"]
     return {
-        "source": "БКИ (симулятор)",
+        "source": "БКИ",
         "report_id": report_id,
         "inn": body.inn,
         "found": True,
@@ -198,7 +198,7 @@ async def abs_disburse(body: DisburseRequest):
     prefix = "45206" if body.inn and len(body.inn) == 10 else "45406"
     loan_account = f"{prefix}810{random.randint(0, 999_999_999_999):012d}"
     result = {
-        "source": "АБС (симулятор)",
+        "source": "АБС банка",
         "operation_id": uuid.uuid4().hex,
         "status": "DISBURSED",
         "loan_account": loan_account,

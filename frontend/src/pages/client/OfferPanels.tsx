@@ -107,7 +107,7 @@ export function OfferTicket({
           </div>
         </div>
         <div>
-          <div className="k">{revolving ? "Проценты за год при полном использовании" : "Переплата за весь срок"}</div>
+          <div className="k">{revolving ? "Проценты за год при полном использовании" : "Проценты за весь срок"}</div>
           <div className="num" style={{ fontSize: 17 }}>
             {money(offer.total_interest)}
           </div>

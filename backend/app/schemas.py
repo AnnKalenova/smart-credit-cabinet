@@ -173,6 +173,8 @@ class MatchIn(InModel):
     purpose: Code
     amount: Money
     term_months: Term
+    has_collateral: bool | None = Field(default=None, description="Залог: не указан — как требует продукт")
+    owner_guarantee: bool = Field(default=False, description="Поручительство собственника")
 
 
 class MatchOut(BaseModel):
@@ -332,6 +334,10 @@ class ApplicationOut(ApplicationSummaryOut):
     next_application: dict[str, Any] | None = Field(
         default=None, description="Новая заявка, поданная на основе этой: номер и статус"
     )
+    proposed_conditions: dict[str, Any] | None = Field(
+        default=None,
+        description="Условия из конструктора, которые сотрудник без права подписи передал руководителю",
+    )
 
 
 class ConditionsIn(InModel):
@@ -342,6 +348,20 @@ class ConditionsIn(InModel):
     term_months: Term | None = None
     has_collateral: bool | None = None
     owner_guarantee: bool | None = None
+
+
+class ReapplyIn(ConditionsIn):
+    replace_current: bool = Field(
+        default=False,
+        description="Для заявки с предложением или на ручном рассмотрении: закрыть её (отказ от предложения "
+        "или отзыв) и создать новую на этих условиях — одним действием",
+    )
+
+
+class SignatureRequestIn(InModel):
+    conditions: ConditionsIn | None = Field(
+        default=None, description="Условия из конструктора, на которых сотрудник предлагает подать новую заявку"
+    )
 
 
 class SimulationIn(ConditionsIn):

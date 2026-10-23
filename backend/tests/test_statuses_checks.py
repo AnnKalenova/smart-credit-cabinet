@@ -88,6 +88,9 @@ def test_client_view_tones_and_steps():
     assert client_view("ENRICHMENT")["tone"] == "progress"
     assert client_view("ISSUED")["tone"] == "positive"
     assert client_view("DECLINED")["tone"] == "negative"
+    # отзыв заявки и отказ от предложения — решение клиента, не отказ банка
+    assert client_view("CANCELLED")["tone"] == "neutral"
+    assert client_view("CLIENT_DECLINED")["tone"] == "neutral"
     assert client_view("DRAFT")["step"] == 0
     assert client_view("OFFER_READY")["step"] == 2
     assert client_view("ISSUED")["is_final"] is True

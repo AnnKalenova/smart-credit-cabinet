@@ -1,11 +1,11 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FilePlus2, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { BadgeCheck, FilePlus2, RotateCcw, Send, Sparkles, UserRoundCheck } from "lucide-react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ApiError, api } from "../../api/client";
+import { api } from "../../api/client";
 import type { Application, Conditions, SimOutcome, SimProduct, SimResult, Simulation } from "../../api/types";
-import { Modal } from "../../components/ui";
-import { formatInputAmount, money, moneyShort, parseAmount, pct } from "../../lib/format";
+import { AmountInput, Modal } from "../../components/ui";
+import { dateTime, formatInputAmount, money, moneyShort, parseAmount, pct } from "../../lib/format";
 import { useToast } from "../../lib/toast";
 
 const TONE: Record<SimOutcome, string> = {
@@ -17,6 +17,8 @@ const TONE: Record<SimOutcome, string> = {
 };
 
 const CLOSED = ["DECLINED", "CLIENT_DECLINED", "EXPIRED", "CANCELLED"];
+// открытые заявки, которые заменяются новой одним действием
+const REPLACEABLE = ["OFFER_READY", "MANUAL_REVIEW"];
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -54,7 +56,56 @@ function intro(status: string): string {
   return "Подберите условия для новой заявки — банк сразу покажет решение, ставку и платёж.";
 }
 
-function Verdict({ r, pending }: { r: SimResult; pending: boolean }) {
+/** «останется описать залог, подписать согласия и отправить» — по тому, чего не хватает новой заявке. */
+function nextSteps(todo: string[]): string {
+  return `Данные и документы перенесём — останется ${[...todo, "подписать согласия и отправить"].join(", ")}.`;
+}
+
+/** Сроки — радиогруппа: одна остановка по Tab, выбор стрелками. */
+function TermChips({ terms, value, label, onChange }: { terms: number[]; value: number; label: string; onChange: (t: number) => void }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const current = Math.max(0, terms.indexOf(value));
+  const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const last = terms.length - 1;
+    const next =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? i === last ? 0 : i + 1
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? i === 0 ? last : i - 1
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? last
+              : null;
+    if (next === null) return;
+    e.preventDefault();
+    onChange(terms[next]);
+    refs.current[next]?.focus();
+  };
+  return (
+    <div className="term-chips" role="radiogroup" aria-label={label}>
+      {terms.map((t, i) => (
+        <button
+          key={t}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          type="button"
+          role="radio"
+          aria-checked={t === value}
+          tabIndex={i === current ? 0 : -1}
+          className={t === value ? "on" : ""}
+          onClick={() => onChange(t)}
+          onKeyDown={(e) => onKey(e, i)}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Verdict({ r, stale }: { r: SimResult; stale: boolean }) {
   const revolving = r.repayment_type === "REVOLVING";
   const share = r.payment_share;
   const cap = r.payment_share_cap;
@@ -62,15 +113,8 @@ function Verdict({ r, pending }: { r: SimResult; pending: boolean }) {
   // шкала до 60%: допустимая граница 40% стоит на двух третях
   const scale = Math.max(0.6, (share ?? 0) * 1.05);
   return (
-    <div className={`verdict ${TONE[r.outcome]}`} aria-live="polite">
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div className="verdict-title">{r.verdict}</div>
-        {pending && (
-          <span className="recalc">
-            <span className="spin" /> пересчитываем
-          </span>
-        )}
-      </div>
+    <div className={`verdict ${TONE[r.outcome]} ${stale ? "stale" : ""}`}>
+      <div className="verdict-title">{r.verdict}</div>
       <p className="small muted">{r.explanation}</p>
       {r.outcome !== "DECLINE" && (
         <div className="figures">
@@ -83,13 +127,13 @@ function Verdict({ r, pending }: { r: SimResult; pending: boolean }) {
             <div className="v">{money(r.monthly_payment)}</div>
           </div>
           <div>
-            <div className="k">{revolving ? "Проценты за год при полном использовании" : "Переплата за весь срок"}</div>
+            <div className="k">{revolving ? "Проценты за год при полном использовании" : "Проценты за весь срок"}</div>
             <div className="v">{money(r.total_interest)}</div>
           </div>
           {r.max_amount ? (
             <div>
               <div className="k">Максимум на этот срок</div>
-              <div className="v">{moneyShort(r.max_amount)}</div>
+              <div className="v">{money(r.max_amount)}</div>
             </div>
           ) : null}
         </div>
@@ -105,7 +149,7 @@ function Verdict({ r, pending }: { r: SimResult; pending: boolean }) {
           </div>
           <div className="meter-caption">
             <span>{over ? "Выше допустимой нагрузки" : "В пределах допустимой нагрузки"}</span>
-            <span>граница {pct(cap * 100, 0)}</span>
+            <span className="nowrap">граница {pct(cap * 100, 0)}</span>
           </div>
         </div>
       )}
@@ -154,13 +198,16 @@ export function ConditionsBuilder({ app }: { app: Application }) {
     retry: false,
     staleTime: 60_000,
   });
+  // условия, которые сотрудник передал руководителю, открываются у руководителя сразу в конструкторе
+  const proposal = app.permissions.can_sign ? app.proposed_conditions : null;
   useEffect(() => {
-    if (initial.data && !cond) {
-      setCond(initial.data.base);
-      setAmountText(formatInputAmount(initial.data.base.amount));
-      qc.setQueryData(["simulation", app.id, initial.data.base], initial.data);
-    }
-  }, [initial.data, cond, app.id, qc]);
+    if (!initial.data || cond) return;
+    qc.setQueryData(["simulation", app.id, initial.data.base], initial.data);
+    const fromProposal = proposal && initial.data.products.some((p) => p.code === proposal.conditions.product_code);
+    const start = fromProposal ? proposal.conditions : initial.data.base;
+    setCond(start);
+    setAmountText(formatInputAmount(start.amount));
+  }, [initial.data, cond, app.id, qc, proposal]);
 
   const products = initial.data?.products ?? [];
   const product = products.find((p) => p.code === cond?.product_code);
@@ -179,31 +226,42 @@ export function ConditionsBuilder({ app }: { app: Application }) {
     retry: false,
     staleTime: 60_000,
   });
-  const data = sim.data ?? initial.data;
   const pending = sim.isFetching || (cond !== null && debounced !== cond);
+  // пока ответ не пришёл именно для выбранных условий — прежние цифры приглушены, подать заявку нельзя
+  const stale = pending || sim.isPlaceholderData || Boolean(amountError);
 
   const base = initial.data?.base;
   const changed = Boolean(cond && base && !same(cond, base));
   const live = app.next_application?.is_live ? app.next_application : null;
 
-  const termStep = useMemo(() => (product ? product.terms : []), [product]);
-
-  if (initial.error) {
-    // конструктор недоступен (например, заявку не успели оценить) — просто не показываем его
-    if (initial.error instanceof ApiError && [404, 409].includes(initial.error.status)) return null;
-    return null;
-  }
-  if (!initial.data || !cond || !product || !data) return null;
+  if (initial.isError) return null; // конструктор недоступен (например, заявку не успели оценить)
+  if (!initial.data || !cond || !product) return null;
   // стоп-фактор (ликвидация, просрочки) условиями не исправить — объяснение уже есть выше
   if (initial.data.result.outcome === "DECLINE" && !initial.data.result.fixable) return null;
 
-  const r = data.result;
+  if (live) {
+    // новая заявка уже создана — условия меняются в ней, здесь только ссылка
+    return (
+      <section className="panel" aria-labelledby="builder-title">
+        <h2 id="builder-title">Конструктор условий</h2>
+        <div className="row-wrap" style={{ marginTop: 10 }}>
+          <span className="small muted">
+            По этой заявке уже создана новая — № {live.number}, «{live.status_title.toLowerCase()}».
+          </span>
+          <Link className="btn btn-primary btn-s" to={`/c/applications/${live.id}`}>
+            Открыть заявку № {live.number}
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
+  const r = sim.data?.result;
   const update = (patch: Partial<Conditions>) => setCond((c) => (c ? { ...c, ...patch } : c));
 
   const setAmount = (text: string) => {
-    const formatted = formatInputAmount(text);
-    setAmountText(formatted);
-    const n = parseAmount(formatted);
+    setAmountText(text);
+    const n = parseAmount(text);
     if (n >= product.min_amount && n <= product.max_amount) update({ amount: n });
   };
   const chooseProduct = (code: string) => {
@@ -220,6 +278,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
 
   // кто и как подаёт новую заявку из текущего статуса
   const status = app.status;
+  const signers = app.permissions.signers.join(", ") || "руководитель";
   const mode: "reapply" | "decline" | "cancel" | null = CLOSED.includes(status)
     ? app.permissions.can_reapply
       ? "reapply"
@@ -233,28 +292,117 @@ export function ConditionsBuilder({ app }: { app: Application }) {
           ? "cancel"
           : null
         : null;
-  const willDecline = r.outcome === "DECLINE";
+  const canPropose = !app.permissions.can_sign && REPLACEABLE.includes(status);
+  const willDecline = r?.outcome === "DECLINE";
   const sameAsNow = !changed && !CLOSED.includes(status);
+  const blocked = busy || stale || sim.isError || !r || willDecline || sameAsNow;
+
+  const refreshApp = () => {
+    void qc.invalidateQueries({ queryKey: ["applications"] });
+    void qc.invalidateQueries({ queryKey: ["application", app.id] });
+  };
 
   const submit = async () => {
-    if (!cond) return;
     setBusy(true);
     try {
-      if (mode === "decline") await api(`/api/v1/applications/${app.id}/offers/decline`, { method: "POST" });
-      if (mode === "cancel") await api(`/api/v1/applications/${app.id}/cancel`, { method: "POST" });
-      const created = await api<Application>(`/api/v1/applications/${app.id}/reapply`, { method: "POST", json: cond });
+      // отказ от предложения или отзыв и новая заявка — одной операцией: если что-то не так, текущая заявка не меняется
+      const created = await api<Application>(`/api/v1/applications/${app.id}/reapply`, {
+        method: "POST",
+        json: { ...cond, replace_current: mode !== "reapply" },
+      });
       toast.ok(`Создали заявку № ${created.number}: проверьте данные, подпишите согласия и отправьте`);
-      void qc.invalidateQueries({ queryKey: ["applications"] });
-      void qc.invalidateQueries({ queryKey: ["application", app.id] });
+      refreshApp();
       nav(`/c/applications/${created.id}`);
     } catch (e) {
       toast.error(e);
-      void qc.invalidateQueries({ queryKey: ["application", app.id] });
+      refreshApp();
     } finally {
       setBusy(false);
       setConfirm(false);
     }
   };
+
+  const chooseOffer = async (offerId: string) => {
+    setBusy(true);
+    try {
+      await api(`/api/v1/applications/${app.id}/offers/${offerId}/accept`, { method: "POST" });
+      toast.ok("Предложение принято — осталось подписать договор");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setBusy(false);
+      refreshApp();
+    }
+  };
+
+  const propose = async () => {
+    setBusy(true);
+    try {
+      await api(`/api/v1/applications/${app.id}/request-signature`, { method: "POST", json: { conditions: cond } });
+      toast.ok(`Условия переданы: ${signers}. Они откроются в конструкторе этой заявки`);
+      refreshApp();
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ------------------------------------------------------------------ действие внизу
+  let action: ReactNode;
+  if (sim.isError) {
+    action = (
+      <div className="row-wrap">
+        <button className="btn btn-ghost" onClick={() => void sim.refetch()}>
+          <RotateCcw size={18} /> Пересчитать
+        </button>
+        <span className="small muted">Подать заявку можно, когда банк пересчитает решение.</span>
+      </div>
+    );
+  } else if (sameAsNow) {
+    action = <p className="small muted">Измените условия — банк сразу пересчитает решение.</p>;
+  } else if (r?.offer && !stale) {
+    action = app.permissions.can_accept ? (
+      <div className="row-wrap">
+        <button className="btn btn-signal" disabled={busy} onClick={() => chooseOffer(r.offer!.id)}>
+          <BadgeCheck size={18} /> Выбрать этот вариант
+        </button>
+        <span className="small muted">Это вариант из предложения банка — новая заявка не нужна.</span>
+      </div>
+    ) : (
+      <p className="small muted">Это вариант из предложения банка. Выбрать его может {signers}.</p>
+    );
+  } else if (mode) {
+    const primary = status !== "OFFER_READY"; // при действующем предложении главное действие — выбрать вариант выше
+    action = (
+      <div className="row-wrap">
+        <button className={`btn ${primary ? "btn-signal" : "btn-primary"}`} disabled={blocked} onClick={() => (mode === "reapply" ? submit() : setConfirm(true))}>
+          <FilePlus2 size={18} /> Подать заявку на этих условиях
+        </button>
+        <span className="small muted">
+          {amountError
+            ? "Укажите сумму в пределах продукта — банк пересчитает решение."
+            : willDecline
+              ? "На этих условиях банк не одобрит кредит — попробуйте подсказки выше."
+              : nextSteps(r?.todo ?? [])}
+        </span>
+      </div>
+    );
+  } else if (canPropose) {
+    action = (
+      <div className="row-wrap">
+        <button className="btn btn-primary" disabled={blocked} onClick={propose}>
+          <Send size={18} /> Передать руководителю
+        </button>
+        <span className="small muted">
+          Подать заявку на других условиях может {signers}. Передадим выбранные условия — они откроются в этом конструкторе.
+        </span>
+      </div>
+    );
+  } else {
+    action = <p className="small muted">Подать заявку на других условиях может {signers}.</p>;
+  }
 
   return (
     <section className="panel" aria-labelledby="builder-title">
@@ -270,149 +418,168 @@ export function ConditionsBuilder({ app }: { app: Application }) {
         )}
       </div>
 
-      <div className="builder">
-        <div className="builder-controls">
-          {products.length > 1 && (
-            <label className="field">
-              <span className="field-label">Продукт</span>
-              <select className="select" value={cond.product_code} onChange={(e) => chooseProduct(e.target.value)}>
-                {products.map((p) => (
-                  <option key={p.code} value={p.code}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          <div className="field">
-            <label className="field-label" htmlFor="builder-amount">
-              {product.repayment_type === "REVOLVING" ? "Лимит" : "Сумма"}
-            </label>
-            <div className="input-group">
-              <input
-                id="builder-amount"
-                className="input input-money"
-                inputMode="numeric"
-                maxLength={17}
-                value={amountText}
-                aria-invalid={Boolean(amountError)}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-              <span className="suffix">₽</span>
-            </div>
-            <input
-              className="range"
-              type="range"
-              aria-label="Сумма, ползунок"
-              min={product.min_amount}
-              max={product.max_amount}
-              step={product.max_amount > 20_000_000 ? 500_000 : 50_000}
-              value={Math.min(Math.max(cond.amount, product.min_amount), product.max_amount)}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-            <div className="range-scale">
-              <span>{moneyShort(product.min_amount)}</span>
-              <span>{moneyShort(product.max_amount)}</span>
-            </div>
-            {amountError && <span className="field-error">{amountError}</span>}
-          </div>
-
-          <div className="field">
-            <span className="field-label">{product.repayment_type === "REVOLVING" ? "Срок действия лимита, мес." : "Срок, мес."}</span>
-            <div className="term-chips" role="radiogroup" aria-label="Срок">
-              {termStep.map((t) => (
-                <button key={t} role="radio" aria-checked={cond.term_months === t} className={cond.term_months === t ? "on" : ""} onClick={() => update({ term_months: t })}>
-                  {t}
+      {proposal && (
+        <div className="callout info" style={{ marginTop: 16 }}>
+          <UserRoundCheck size={18} />
+          <div className="stack-s">
+            <span>
+              {proposal.by ?? "Сотрудник"} предлагает подать новую заявку: {proposal.text} ({dateTime(proposal.at)}).
+            </span>
+            {!same(cond, proposal.conditions) && (
+              <div>
+                <button className="btn btn-ghost btn-s" onClick={() => apply(proposal.conditions)}>
+                  Показать эти условия
                 </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="stack-s" style={{ gap: 14 }}>
-            {product.collateral !== "NONE" && (
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={cond.has_collateral}
-                  disabled={product.collateral === "REQUIRED"}
-                  onChange={(e) => update({ has_collateral: e.target.checked })}
-                />
-                <span>
-                  Залог имущества
-                  <small>{product.collateral === "REQUIRED" ? "Покупаемое имущество — в залоге, ставка ниже на 1 п.п." : "Ставка ниже на 1 п.п."}</small>
-                </span>
-              </label>
+              </div>
             )}
-            <label className="switch">
-              <input type="checkbox" checked={cond.owner_guarantee} onChange={(e) => update({ owner_guarantee: e.target.checked })} />
-              <span>
-                Поручительство собственника
-                <small>Ставка ниже на 0,5 п.п.</small>
-              </span>
-            </label>
           </div>
         </div>
+      )}
 
-        <div className="stack">
-          <Verdict r={r} pending={pending} />
-          {data.suggestions.length > 0 && (
-            <div>
-              <div className="row" style={{ gap: 8, marginBottom: 10 }}>
-                <Sparkles size={17} style={{ color: "var(--accent)" }} />
-                <b>Что улучшит условия</b>
-              </div>
-              <div>
-                {data.suggestions.map((s) => (
-                  <div key={s.code} className="suggestion">
-                    <div>
-                      <b>{s.title}</b>
-                      <br />
-                      <span>{s.effect}</span>
-                    </div>
-                    <button className="btn btn-ghost btn-s" onClick={() => apply(s.params)}>
-                      Применить
-                    </button>
-                  </div>
-                ))}
+      <div className="builder">
+        <div className="builder-grid">
+          <div className="builder-controls">
+            <div className="controls-col">
+              {products.length > 1 && (
+                <label className="field">
+                  <span className="field-label">Продукт</span>
+                  <select className="select" value={cond.product_code} onChange={(e) => chooseProduct(e.target.value)}>
+                    {products.map((p) => (
+                      <option key={p.code} value={p.code}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <div className="field">
+                <label className="field-label" htmlFor="builder-amount">
+                  {product.repayment_type === "REVOLVING" ? "Лимит" : "Сумма"}
+                </label>
+                <div className="input-group">
+                  <AmountInput
+                    id="builder-amount"
+                    className="input input-money"
+                    value={amountText}
+                    aria-invalid={Boolean(amountError)}
+                    aria-describedby={amountError ? "builder-amount-error" : undefined}
+                    onValueChange={setAmount}
+                  />
+                  <span className="suffix">₽</span>
+                </div>
+                <input
+                  className="range"
+                  type="range"
+                  aria-label={product.repayment_type === "REVOLVING" ? "Лимит, ползунок" : "Сумма, ползунок"}
+                  aria-valuetext={money(cond.amount)}
+                  min={product.min_amount}
+                  max={product.max_amount}
+                  step={product.max_amount > 20_000_000 ? 500_000 : 50_000}
+                  value={Math.min(Math.max(cond.amount, product.min_amount), product.max_amount)}
+                  onChange={(e) => setAmount(formatInputAmount(Number(e.target.value)))}
+                />
+                <div className="range-scale">
+                  <span>{moneyShort(product.min_amount)}</span>
+                  <span>{moneyShort(product.max_amount)}</span>
+                </div>
+                {amountError && (
+                  <span className="field-error" id="builder-amount-error" role="alert">
+                    {amountError}
+                  </span>
+                )}
               </div>
             </div>
-          )}
+            <div className="controls-col">
+              <div className="field">
+                <span className="field-label" id="builder-term">
+                  {product.repayment_type === "REVOLVING" ? "Срок действия лимита, мес." : "Срок, мес."}
+                </span>
+                <TermChips
+                  terms={product.terms}
+                  value={cond.term_months}
+                  label={product.repayment_type === "REVOLVING" ? "Срок действия лимита, месяцев" : "Срок, месяцев"}
+                  onChange={(t) => update({ term_months: t })}
+                />
+              </div>
+
+              <div className="switches">
+                {product.collateral !== "NONE" && (
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={cond.has_collateral}
+                      disabled={product.collateral === "REQUIRED"}
+                      onChange={(e) => update({ has_collateral: e.target.checked })}
+                    />
+                    <span>
+                      Залог имущества
+                      <small>{product.collateral === "REQUIRED" ? "Покупаемое имущество — в залоге, ставка ниже на 1 п.п." : "Ставка ниже на 1 п.п."}</small>
+                    </span>
+                  </label>
+                )}
+                <label className="switch">
+                  <input type="checkbox" checked={cond.owner_guarantee} onChange={(e) => update({ owner_guarantee: e.target.checked })} />
+                  <span>
+                    Поручительство собственника
+                    <small>Ставка ниже на 0,5 п.п.</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div className="builder-result">
+            <div className="result-caption" aria-live="polite">
+              <span>Решение банка на этих условиях</span>
+              {pending && !sim.isError && (
+                <span className="recalc">
+                  <span className="spin" aria-hidden /> пересчитываем
+                </span>
+              )}
+            </div>
+            {sim.isError ? (
+              <div className="verdict negative" role="alert">
+                <div className="verdict-title">Не удалось пересчитать решение</div>
+                <p className="small muted">Сервис не ответил. Условия, которые вы выбрали, сохранены — нажмите «Пересчитать».</p>
+              </div>
+            ) : r ? (
+              <Verdict r={r} stale={stale} />
+            ) : (
+              <div className="verdict">
+                <span className="recalc">
+                  <span className="spin" aria-hidden /> считаем решение
+                </span>
+              </div>
+            )}
+            {!sim.isError && sim.data && sim.data.suggestions.length > 0 && (
+              <div className="suggestions">
+                <div className="row" style={{ gap: 8, marginBottom: 10 }}>
+                  <Sparkles size={17} style={{ color: "var(--accent)" }} />
+                  <b>Что улучшит условия</b>
+                </div>
+                <div>
+                  {sim.data.suggestions.map((s) => (
+                    <div key={s.code} className="suggestion">
+                      <div>
+                        <b>{s.title}</b>
+                        <br />
+                        <span>{s.effect}</span>
+                      </div>
+                      <button className="btn btn-ghost btn-s" disabled={stale} onClick={() => apply(s.params)}>
+                        Применить
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       <hr className="rule" />
-      {live ? (
-        <div className="row-wrap">
-          <span className="small">
-            По этой заявке уже создана новая — № {live.number}, «{live.status_title.toLowerCase()}».
-          </span>
-          <Link className="btn btn-primary btn-s" to={`/c/applications/${live.id}`}>
-            Открыть заявку № {live.number}
-          </Link>
-        </div>
-      ) : mode ? (
-        <div className="row-wrap">
-          <button
-            className="btn btn-signal"
-            disabled={busy || pending || Boolean(amountError) || willDecline || sameAsNow}
-            onClick={() => (mode === "reapply" ? submit() : setConfirm(true))}
-          >
-            <FilePlus2 size={18} /> Подать заявку на эти условия
-          </button>
-          <span className="small muted">
-            {willDecline
-              ? "На этих условиях банк не одобрит кредит — попробуйте подсказки выше."
-              : sameAsNow
-                ? "Измените условия, чтобы подать новую заявку."
-                : "Данные и документы перенесём — останется подписать согласия и отправить."}
-          </span>
-        </div>
-      ) : (
-        <p className="small muted">
-          Подать заявку на другие условия может {app.permissions.signers.join(", ") || "руководитель"}.
-        </p>
-      )}
+      {action}
 
       {confirm && (
         <Modal
@@ -433,8 +600,7 @@ export function ConditionsBuilder({ app }: { app: Application }) {
             {mode === "decline"
               ? "Текущее предложение банка закроется, и мы создадим новую заявку"
               : "Рассмотрение текущей заявки прекратится, и мы создадим новую"}{" "}
-            на выбранных условиях: {product.name.toLowerCase()}, {money(cond.amount)} на {cond.term_months} мес. Данные и документы
-            перенесём — останется подписать согласия и отправить.
+            на выбранных условиях: {product.name.toLowerCase()}, {money(cond.amount)} на {cond.term_months} мес. {nextSteps(r?.todo ?? [])}
           </p>
         </Modal>
       )}

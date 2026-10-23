@@ -112,7 +112,15 @@ def match(body: MatchIn, db: Session = Depends(get_db), user: User = Depends(cli
     return {
         "key_rate": kr,
         "results": assessment.match_products(
-            db, company, body.purpose, body.amount, body.term_months, kr, as_of_today()
+            db,
+            company,
+            body.purpose,
+            body.amount,
+            body.term_months,
+            kr,
+            as_of_today(),
+            has_collateral=body.has_collateral,
+            owner_guarantee=body.owner_guarantee,
         ),
     }
 

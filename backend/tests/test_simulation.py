@@ -33,10 +33,13 @@ def test_counter_offer_shows_what_gets_approval(login):
     assert [o["amount"] for o in result["offers"]] == [o["amount"] for o in app["offers"]]
 
     by_code = {s["code"]: s for s in data["suggestions"]}
-    assert by_code["term"]["result"]["outcome"] == "APPROVE"
-    assert by_code["term"]["effect"].startswith("Одобрим автоматически вместо")
-    assert by_code["amount"]["params"]["amount"] <= result["max_amount"]
-    assert by_code["amount"]["result"]["outcome"] == "APPROVE"
+    offered = {(o["amount"], o["term_months"]) for o in app["offers"]}
+    term = by_code["term"]
+    assert term["result"]["outcome"] == "APPROVE"
+    assert term["effect"].startswith("Одобрим автоматически вместо")
+    # варианты банка (вся сумма на 18 мес., 710 000 ₽ на 12 мес.) не повторяются в подсказках
+    assert (term["params"]["amount"], term["params"]["term_months"]) not in offered
+    assert "amount" not in by_code
     assert len(data["suggestions"]) <= 4
     # границы для элементов управления — только продукты под цель заявки
     assert {p["code"] for p in data["products"]} == {"EXPRESS", "INVESTMENT"}
@@ -136,3 +139,103 @@ def test_simulation_changes_nothing(login):
     after = c.get(app["id"])
     assert after["amount"] == before["amount"] and after["offers"] == before["offers"]
     assert after["events"] == before["events"]
+
+
+def test_offer_conditions_are_chosen_not_reapplied(login):
+    c = login("kuznetsova")
+    app = c.prepare_and_submit("EXPRESS", "EXPANSION", 1_000_000, 12)
+    offers = {(o["amount"], o["term_months"]): o for o in app["offers"]}
+    data = _simulate(c, app)
+    # подсказки не повторяют предложение банка: его выбирают в предложении, без новой заявки
+    for s in data["suggestions"]:
+        assert (s["params"]["amount"], s["params"]["term_months"]) not in offers
+    assert data["result"]["offer"] is None
+    amount, term = next(iter(offers))
+    same = _simulate(c, app, amount=amount, term_months=term, with_suggestions=False)["result"]
+    assert same["offer"]["id"] == offers[(amount, term)]["id"]
+    # с поручительством — уже другие условия, не предложение банка
+    other = _simulate(c, app, amount=amount, term_months=term, owner_guarantee=True, with_suggestions=False)
+    assert other["result"]["offer"] is None
+
+
+def test_other_product_needs_nothing_missing_and_todo_is_honest(login):
+    c = login("kuznetsova")
+    app = c.prepare_and_submit("EXPRESS", "EXPANSION", 1_000_000, 12)
+    data = _simulate(c, app)
+    # инвестиционному кредиту нужны залог и счёт поставщика — в подсказки он не попадает
+    assert not any(s["code"].startswith("product:") for s in data["suggestions"])
+    assert data["result"]["todo"] == []
+    investment = _simulate(c, app, product_code="INVESTMENT", amount=1_000_000, term_months=24)["result"]
+    assert investment["todo"] == [
+        "описать имущество для залога",
+        "приложить документ: счёт или спецификация поставщика",
+    ]
+
+    s = login("smirnov")
+    wc = s.prepare_and_submit("WORKING_CAPITAL", "WORKING_CAPITAL", 3_000_000, 12)
+    pledged = _simulate(s, wc, has_collateral=True, with_suggestions=False)["result"]
+    assert pledged["todo"] == ["описать имущество для залога"]
+
+
+def test_replace_current_offer_in_one_step(login):
+    c = login("kuznetsova")
+    app = c.prepare_and_submit("EXPRESS", "EXPANSION", 1_000_000, 12)
+    best = _simulate(c, app)["suggestions"][0]
+    # без явного согласия закрыть текущую заявку новая не создаётся
+    c.call("POST", _url(app, "/reapply"), json=best["params"], expect=409)
+    # ошибка в условиях — текущее предложение остаётся в силе
+    c.call("POST", _url(app, "/reapply"), json={"amount": 50_000_000, "replace_current": True}, expect=422)
+    assert c.get(app["id"])["status"] == "OFFER_READY"
+
+    new = c.call("POST", _url(app, "/reapply"), json={**best["params"], "replace_current": True})
+    assert new["status"] == "DRAFT" and new["parent_id"] == app["id"]
+    old = c.get(app["id"])
+    assert old["status"] == "CLIENT_DECLINED"
+    assert old["next_application"]["number"] == new["number"]
+    assert "Отказ от предложения: клиент подаёт заявку на других условиях" in [e["title"] for e in old["events"]]
+    # повторная кнопка не создаст вторую заявку
+    c.call("POST", _url(app, "/reapply"), json={**best["params"], "replace_current": True}, expect=409)
+
+
+def test_replace_application_under_manual_review(login):
+    c = login("lebedev")
+    app = c.prepare_and_submit(
+        "INVESTMENT",
+        "EQUIPMENT",
+        25_000_000,
+        60,
+        docs=["SUPPLIER_INVOICE", "FIN_STATEMENTS"],
+        collateral_description="Обрабатывающий центр с ЧПУ",
+    )
+    assert app["status"] == "MANUAL_REVIEW"
+    new = c.call("POST", _url(app, "/reapply"), json={"amount": 15_000_000, "replace_current": True})
+    assert new["amount"] == 15_000_000 and new["collateral_description"] == "Обрабатывающий центр с ЧПУ"
+    assert c.get(app["id"])["status"] == "CANCELLED"
+
+
+def test_employee_passes_conditions_to_signer(login):
+    s, o = login("smirnov"), login("orlova")
+    app = s.prepare_and_submit("EXPRESS", "OTHER", 500_000, 6)
+    assert app["status"] == "OFFER_READY"
+    proposal = {"amount": 400_000, "term_months": 12, "owner_guarantee": True}
+    # без права подписи заменить заявку нельзя — можно передать условия руководителю
+    o.call("POST", _url(app, "/reapply"), json={**proposal, "replace_current": True}, expect=403)
+    o.call("POST", _url(app, "/request-signature"), json={"conditions": {"amount": 1}}, expect=422)
+    o.call("POST", _url(app, "/request-signature"), json={"conditions": proposal})
+
+    view = s.get(app["id"])
+    assert view["proposed_conditions"]["conditions"] == {
+        "product_code": "EXPRESS",
+        "amount": 400_000,
+        "term_months": 12,
+        "has_collateral": False,
+        "owner_guarantee": True,
+    }
+    assert view["proposed_conditions"]["by"] == "Орлова Мария Петровна"
+    text = "Экспресс-кредит, 400 000 ₽ на 12 мес., с поручительством собственника"
+    assert view["proposed_conditions"]["text"] == text
+    notes = s.call("GET", "/api/v1/notifications")["items"]
+    assert notes[0]["title"] == f"Новые условия по заявке № {app['number']}" and text in notes[0]["body"]
+    # руководитель подаёт новую заявку на этих условиях — предложение закрывается
+    s.call("POST", _url(app, "/reapply"), json={**view["proposed_conditions"]["conditions"], "replace_current": True})
+    assert s.get(app["id"])["proposed_conditions"] is None

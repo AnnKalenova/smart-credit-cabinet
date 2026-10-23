@@ -13,15 +13,15 @@ from types import SimpleNamespace
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.enums import AppStatus, DecisionKind, DecisionOutcome
+from app.domain.enums import DOC_TYPES, AppStatus, DecisionKind, DecisionOutcome, OfferStatus
 from app.domain.finance import floor_to, offer_economics
 from app.domain.policy import DTI_CAP, ProductParams, evaluate, price
-from app.domain.products import NICE_TERMS, pledged
+from app.domain.products import NICE_TERMS, pledged, required_documents
 from app.domain.scoring import months_between, score
-from app.domain.text import fmt_amount, fmt_money, fmt_rate, months_range
-from app.models import Application, Decision, Product
+from app.domain.text import fmt_amount, fmt_money, fmt_rate, lower_first, months_range
+from app.models import Application, Decision, Offer, Product
 from app.services import assessment
-from app.services.workflow import key_rate, local_today
+from app.services.workflow import key_rate, local_today, utcnow
 
 # Конструктор открыт там, где заявка уже оценена: есть рейтинг и сведения из источников
 SIMULATION_STATUSES = {
@@ -109,6 +109,20 @@ class Simulator:
         self.tenure = months_between(app.company.client_since, self.today)
         self.products = {p.code: p for p in assessment.active_products(db)}
         self.own_payments = assessment.own_obligations(db, app.company_id, app.id)
+        self.doc_types = {d.doc_type for d in app.documents}
+        # действующие предложения банка: те же условия клиент выбирает в предложении, без новой заявки
+        now = utcnow()
+        self.offers = (
+            [
+                o
+                for o in db.scalars(
+                    select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE)
+                )
+                if o.valid_until > now
+            ]
+            if app.status == AppStatus.OFFER_READY
+            else []
+        )
 
     # ------------------------------------------------------------------ параметры
 
@@ -143,6 +157,47 @@ class Simulator:
             has_collateral=pledged(product, self.app.has_collateral),
             owner_guarantee=bool(self.app.owner_guarantee),
         )
+
+    def params(self, product_code=None, amount=None, term_months=None, has_collateral=None, owner_guarantee=None):
+        """Условия из запроса: не переданное берётся из заявки."""
+        base = self.base_params()
+        return Params(
+            product_code=product_code or base.product_code,
+            amount=amount if amount is not None else base.amount,
+            term_months=term_months or base.term_months,
+            has_collateral=base.has_collateral if has_collateral is None else has_collateral,
+            owner_guarantee=base.owner_guarantee if owner_guarantee is None else owner_guarantee,
+        )
+
+    def matching_offer(self, p: Params) -> Offer | None:
+        """Действующее предложение банка ровно на этих условиях."""
+        product = self.products.get(p.product_code)
+        if product is None or p.owner_guarantee != bool(self.app.owner_guarantee):
+            return None
+        if pledged(product, p.has_collateral) != pledged(product, self.app.has_collateral):
+            return None
+        for o in self.offers:
+            if (
+                o.product_code == p.product_code
+                and o.term_months == p.term_months
+                and abs(float(o.amount) - p.amount) < 0.5
+            ):
+                return o
+        return None
+
+    def todo(self, product: Product, p: Params) -> list[str]:
+        """Что останется сделать в новой заявке на этих условиях — кроме согласий и отправки."""
+        items = []
+        if pledged(product, p.has_collateral) and not (self.app.collateral_description or "").strip():
+            items.append("описать имущество для залога")
+        missing = [
+            lower_first(DOC_TYPES.get(t, t))
+            for t in required_documents(product, p.amount, self.app.purpose, self.app.company.kind)
+            if t not in self.doc_types
+        ]
+        if missing:
+            items.append("приложить " + ("документ" if len(missing) == 1 else "документы") + ": " + ", ".join(missing))
+        return items
 
     def validate(self, p: Params) -> Product:
         product = self.products.get(p.product_code)
@@ -225,6 +280,7 @@ class Simulator:
             explanation = texts[0] if texts else "Текущие обороты и долговая нагрузка не позволяют выдать кредит"
         # Отказ по стоп-фактору (статус компании, просрочки, рейтинг) другими условиями не исправить
         fixable = not any(r.kind == "STOP" and r.code != "no_capacity" for r in result.reasons)
+        match = self.matching_offer(p)
 
         return {
             **p.to_dict(),
@@ -258,6 +314,16 @@ class Simulator:
                 for o in result.offers
             ],
             "key_rate": self.key_rate,
+            # условия совпадают с действующим предложением банка — его выбирают без новой заявки
+            "offer": {
+                "id": str(match.id),
+                "label": match.label,
+                "rate": float(match.rate),
+                "monthly_payment": float(match.monthly_payment),
+            }
+            if match
+            else None,
+            "todo": self.todo(product, p),
         }
 
     # ------------------------------------------------------------------ подсказки
@@ -274,7 +340,10 @@ class Simulator:
         if product.repayment_type == "ANNUITY":
             longer = [t for t in NICE_TERMS if base.term_months < t <= product.max_term and t >= product.min_term]
             chosen = None
-            for t in longer:  # самый короткий срок, при котором решение становится лучше
+            # самый короткий срок, при котором решение становится лучше; срок из предложения банка
+            # не подсказываем — его выбирают в самом предложении
+            longer = [t for t in longer if not self.matching_offer(_replace(base, term_months=t))]
+            for t in longer:
                 trial = self.run(_replace(base, term_months=t))
                 if OUTCOME_RANK[DecisionOutcome(trial["outcome"])] > OUTCOME_RANK[DecisionOutcome(current["outcome"])]:
                     chosen = t
@@ -297,21 +366,22 @@ class Simulator:
                 continue
             amount = min(max(base.amount, float(alt.min_amount)), float(alt.max_amount))
             term = min(max(base.term_months, alt.min_term), alt.max_term)
+            alt_params = Params(alt.code, amount, term, pledged(alt, base.has_collateral), base.owner_guarantee)
+            if self.todo(alt, alt_params):
+                # как и во встречном предложении банка: другой продукт — только если для него
+                # не нужны залог и документы, которых нет в заявке
+                continue
             title = f"«{alt.name}»"
             if amount != base.amount or term != base.term_months:
                 title += f": {_rub(amount)} на {term} мес."
             if alt.collateral == "REQUIRED":
                 title += ", с залогом приобретаемого имущества"
-            candidates.append(
-                (
-                    f"product:{alt.code}",
-                    title,
-                    Params(alt.code, amount, term, pledged(alt, base.has_collateral), base.owner_guarantee),
-                )
-            )
+            candidates.append((f"product:{alt.code}", title, alt_params))
 
         found: list[dict] = []
         for code, title, params in candidates:
+            if self.matching_offer(params):
+                continue  # это уже есть в предложении банка — выбрать его можно без новой заявки
             try:
                 res = self.run(params)
             except SimulationError:
@@ -337,6 +407,16 @@ class Simulator:
                 product_shown = True
             result.append(s)
         return result[:4]
+
+
+def describe(product: Product, p: Params) -> str:
+    """Условия одной строкой: «Экспресс-кредит, 710 000 ₽ на 12 мес., с поручительством собственника»."""
+    parts = [product.name, f"{fmt_money(p.amount)} на {p.term_months} мес."]
+    if pledged(product, p.has_collateral):
+        parts.append("с залогом имущества")
+    if p.owner_guarantee:
+        parts.append("с поручительством собственника")
+    return ", ".join(parts)
 
 
 def _replace(p: Params, **changes) -> Params:

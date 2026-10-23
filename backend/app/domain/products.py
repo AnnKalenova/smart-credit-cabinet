@@ -33,7 +33,7 @@ PRODUCTS_SEED: list[dict] = [
         "repayment_type": "ANNUITY",
         "collateral": "NONE",
         "doc_rules": [],
-        "features": ["До 5 млн ₽", "До 3 лет", "Без залога", "Без документов"],
+        "features": ["До 5\u00a0млн\u00a0₽", "До 3 лет", "Без залога", "Без документов"],
         "sort_order": 1,
     },
     {
@@ -60,7 +60,7 @@ PRODUCTS_SEED: list[dict] = [
             {"doc_type": DocType.TAX_RETURN, "when": "amount_gt", "value": 10_000_000, "kinds": ["IP"]},
             {"doc_type": DocType.CONTRACT_COPY, "when": "purpose", "value": Purpose.CONTRACT},
         ],
-        "features": ["До 30 млн ₽", "До 2 лет", "Можно без залога", "Скидка за поручительство"],
+        "features": ["До 30\u00a0млн\u00a0₽", "До 2 лет", "Можно без залога", "Скидка за поручительство"],
         "sort_order": 2,
     },
     {
@@ -87,7 +87,7 @@ PRODUCTS_SEED: list[dict] = [
             {"doc_type": DocType.FIN_STATEMENTS, "when": "amount_gt", "value": 10_000_000, "kinds": ["LEGAL"]},
             {"doc_type": DocType.TAX_RETURN, "when": "amount_gt", "value": 10_000_000, "kinds": ["IP"]},
         ],
-        "features": ["До 100 млн ₽", "До 7 лет", "Залог — покупаемое имущество", "Самая низкая ставка"],
+        "features": ["До 100\u00a0млн\u00a0₽", "До 7 лет", "Залог — покупаемое имущество", "Самая низкая ставка"],
         "sort_order": 3,
     },
     {

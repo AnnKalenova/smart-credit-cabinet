@@ -156,8 +156,10 @@ STEP_OF_STATUS = {
 def client_view(status: str) -> dict:
     s = S(status)
     title, now, nxt = CLIENT_STATUS[s]
-    if s in (S.DECLINED, S.CLIENT_DECLINED, S.CANCELLED, S.EXPIRED):
+    if s in (S.DECLINED, S.EXPIRED):
         tone = "negative"
+    elif s in (S.CLIENT_DECLINED, S.CANCELLED):
+        tone = "neutral"  # решение клиента, а не отказ банка
     elif s in (S.NEEDS_INFO, S.OFFER_READY, S.SIGNING, S.DRAFT):
         tone = "action"
     elif s == S.ISSUED:
