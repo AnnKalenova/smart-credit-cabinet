@@ -1,14 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
-import { CircleCheck, Send, ShieldCheck, UserRoundCheck } from "lucide-react";
+import { CircleCheck, RotateCcw, Send, ShieldCheck, UserRoundCheck } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../../api/client";
+import { ApiError, api, getToken } from "../../api/client";
 import type { Application, CompanyProfile, MatchResult, Product } from "../../api/types";
 import { SignDialog } from "../../components/SignDialog";
 import { AmountInput, Field, ProblemList } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
 import { date, formatInputAmount, money, parseAmount, rateRange } from "../../lib/format";
-import { useToast } from "../../lib/toast";
+import { registerSaver } from "../../lib/pendingSaves";
+import { errorText, useToast } from "../../lib/toast";
 import { DocumentsBlock, useRefreshApp } from "./DocumentsBlock";
+
+/** Ошибка сохранения перед действием: действие не выполняется, пока банк не получил все изменения. */
+class UnsavedChanges extends Error {}
 
 type Draft = {
   product_code: string;
@@ -53,12 +57,28 @@ export function DraftEditor({ app }: { app: Application }) {
   const toast = useToast();
   const refresh = useRefreshApp(app.id);
   const [d, setD] = useState<Draft>(() => toDraft(app));
-  const [saved, setSaved] = useState<"idle" | "saving" | "saved">("idle");
+  const [saved, setSaved] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveError, setSaveError] = useState("");
   const [problems, setProblems] = useState<string[]>([]);
   const [signing, setSigning] = useState(false);
   const [busy, setBusy] = useState(false);
+  // изменения, которых ещё нет на сервере; при ошибке сохранения они остаются здесь до следующей попытки
   const dirty = useRef<Partial<Record<keyof Draft, unknown>>>({});
   const timer = useRef<number | undefined>(undefined);
+  // сохранения идут строго по одному: следующее начинается, когда закончилось предыдущее
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const pending = useRef(0);
+  const latest = useRef(d); // форма на момент отправки — после того как все правки сохранены
+  useEffect(() => {
+    latest.current = d;
+  }, [d]);
+
+  // уход из черновика (ссылка, другая заявка): правку, которую автосохранение ещё не отправило, сохраняем сразу
+  const leave = useRef<() => void>(() => undefined);
+  useEffect(() => () => leave.current(), []);
+  // выход из кабинета сначала сохраняет правки, которые ждут автосохранения (пока вход ещё действует)
+  const saveNow = useRef<() => Promise<void>>(() => Promise.resolve());
+  useEffect(() => registerSaver(() => saveNow.current()), []);
 
   const products = useQuery({ queryKey: ["products"], queryFn: () => api<Product[]>("/api/v1/products"), staleTime: 60_000 });
   const profile = useQuery({
@@ -67,25 +87,66 @@ export function DraftEditor({ app }: { app: Application }) {
   });
   const product = products.data?.find((p) => p.code === d.product_code) ?? app.product;
 
-  // Если заявку обновили извне (другая вкладка, документы) — подтягиваем поля, которые не редактируются сейчас
+  // Если заявку обновили извне (другая вкладка, документы) — подтягиваем данные, но только когда все правки
+  // уже на сервере: иначе форма откатилась бы к прежним значениям
   useEffect(() => {
-    if (Object.keys(dirty.current).length === 0) setD(toDraft(app));
+    if (Object.keys(dirty.current).length === 0 && pending.current === 0) setD(toDraft(app));
   }, [app]);
 
-  const flush = async () => {
+  const saveOnce = async () => {
     const patch = dirty.current;
     if (Object.keys(patch).length === 0) return;
     dirty.current = {};
     setSaved("saving");
     try {
       await api(`/api/v1/applications/${app.id}`, { method: "PATCH", json: patch });
-      setSaved("saved");
-      refresh();
     } catch (e) {
-      setSaved("idle");
-      toast.error(e);
+      // ничего не теряем: несохранённое уйдёт со следующей попыткой, вместе с новыми правками
+      dirty.current = { ...patch, ...dirty.current };
+      setSaved("error");
+      setSaveError(errorText(e));
+      throw e;
+    }
+    if (Object.keys(dirty.current).length === 0) setSaved("saved");
+    refresh();
+  };
+
+  /** Сохраняет накопленные правки после уже начатого сохранения. Ошибка — исключение. */
+  const flush = (): Promise<void> => {
+    window.clearTimeout(timer.current);
+    pending.current += 1;
+    const run = queue.current
+      .catch(() => undefined)
+      .then(saveOnce)
+      .finally(() => {
+        pending.current -= 1;
+      });
+    queue.current = run;
+    return run;
+  };
+
+  /** Перед подписью и отправкой: все правки из формы должны быть на сервере, иначе действие не выполняется. */
+  const saveAll = async () => {
+    try {
+      do await flush();
+      while (Object.keys(dirty.current).length > 0);
+    } catch (e) {
+      throw new UnsavedChanges(errorText(e));
     }
   };
+
+  const autosave = () => {
+    flush().catch((e) => toast.error(e));
+  };
+  useEffect(() => {
+    leave.current = () => {
+      window.clearTimeout(timer.current);
+      // без входа сохранить нельзя (кабинет закрыт или сессия истекла) — не пугаем ошибкой
+      if (Object.keys(dirty.current).length === 0 || !getToken()) return;
+      flush().catch((e) => toast.error(new ApiError(0, `Последние изменения в черновике не сохранились. ${errorText(e)}`)));
+    };
+    saveNow.current = () => (Object.keys(dirty.current).length ? flush().catch(() => undefined) : Promise.resolve());
+  });
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K], immediate = false) => {
     setD((prev) => ({ ...prev, [key]: value }));
@@ -100,7 +161,7 @@ export function DraftEditor({ app }: { app: Application }) {
       dirty.current[key] = value;
     }
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(flush, immediate ? 0 : 700);
+    timer.current = window.setTimeout(autosave, immediate ? 0 : 700);
   };
 
   const changeProduct = (code: string) => {
@@ -119,7 +180,11 @@ export function DraftEditor({ app }: { app: Application }) {
   const canSign = app.permissions.can_sign;
 
   const signConsents = async (challengeId: string, code: string) => {
-    await flush();
+    try {
+      await saveAll();
+    } catch (e) {
+      throw new ApiError(0, `Согласия не подписаны: не удалось сохранить изменения в заявке. ${(e as Error).message}`);
+    }
     await api(`/api/v1/applications/${app.id}/consents`, { method: "POST", json: { challenge_id: challengeId, code } });
     toast.ok("Согласия подписаны");
     refresh();
@@ -129,12 +194,26 @@ export function DraftEditor({ app }: { app: Application }) {
     setBusy(true);
     setProblems([]);
     try {
-      await flush();
-      await api(`/api/v1/applications/${app.id}/submit`, { method: "POST" });
+      await saveAll();
+      // банк сверит условия с сохранёнными: заявка не уйдёт с другой суммой, чем в форме
+      const f = latest.current;
+      await api(`/api/v1/applications/${app.id}/submit`, {
+        method: "POST",
+        json: {
+          product_code: f.product_code,
+          amount: parseAmount(f.amount),
+          term_months: f.term_months,
+          purpose: f.purpose,
+          has_collateral: f.has_collateral,
+          owner_guarantee: f.owner_guarantee,
+          declared_revenue: parseAmount(f.declared_revenue) || null,
+        },
+      });
       toast.ok("Заявка отправлена в банк");
       refresh();
     } catch (e) {
-      if (e instanceof ApiError && e.problems.length) setProblems(e.problems);
+      if (e instanceof UnsavedChanges) setProblems([`Заявка не отправлена: не удалось сохранить изменения. ${e.message}`]);
+      else if (e instanceof ApiError && e.problems.length) setProblems(e.problems);
       else toast.error(e);
     } finally {
       setBusy(false);
@@ -143,12 +222,13 @@ export function DraftEditor({ app }: { app: Application }) {
 
   const askSigner = async () => {
     try {
-      await flush();
+      await saveAll();
       await api(`/api/v1/applications/${app.id}/request-signature`, { method: "POST" });
       toast.ok(`Уведомили: ${app.permissions.signers.join(", ")}`);
       refresh();
     } catch (e) {
-      toast.error(e);
+      if (e instanceof UnsavedChanges) toast.error(new ApiError(0, `Не передали на подпись: не удалось сохранить изменения. ${e.message}`));
+      else toast.error(e);
     }
   };
 
@@ -162,9 +242,18 @@ export function DraftEditor({ app }: { app: Application }) {
       <section className="panel">
         <div className="panel-head">
           <h2>Параметры кредита</h2>
-          <span className="xs faint" aria-live="polite">
-            {saved === "saving" ? "Сохраняем…" : saved === "saved" ? "Черновик сохранён" : "Черновик сохраняется автоматически"}
-          </span>
+          {saved === "error" ? (
+            <span className="save-error xs" role="alert">
+              <span>Изменения не сохранены. {saveError}</span>
+              <button className="btn-link xs" onClick={autosave}>
+                <RotateCcw size={13} /> Повторить
+              </button>
+            </span>
+          ) : (
+            <span className="xs faint" aria-live="polite">
+              {saved === "saving" ? "Сохраняем…" : saved === "saved" ? "Черновик сохранён" : "Черновик сохраняется автоматически"}
+            </span>
+          )}
         </div>
         <div className="form-grid">
           <Field label="Продукт">

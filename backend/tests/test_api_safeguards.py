@@ -1,7 +1,7 @@
 """Защитные проверки конвейера: неполный ответ внешней системы не принимается за благополучный; сбой любого
-автоматического этапа передаёт заявку специалисту; несколько полученных одновременно предложений нельзя принять
-сверх ограничения долговой нагрузки — ни по очереди, ни одновременно, а специалист не может одобрить вариант сверх
-него."""
+автоматического этапа передаёт заявку специалисту; отправка черновика сверяет условия формы с сохранёнными;
+несколько полученных одновременно предложений нельзя принять сверх ограничения долговой нагрузки — ни по очереди,
+ни одновременно, а специалист не может одобрить вариант сверх него."""
 
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -137,6 +137,27 @@ def test_application_stuck_before_handlers_existed_goes_to_specialist(login, mon
     a.call("POST", _bank(app, "/rerun"))
     drain()
     assert c.get(app["id"])["status"] == "OFFER_READY"
+
+
+# --------------------------------------------------------------------------- отправка черновика
+
+
+def test_submit_checks_that_form_matches_saved_draft(login):
+    u = login("smirnov")
+    app = u.draft("EXPRESS", "OTHER", 300_000, 6)
+    u.sign_consents(app["id"])
+    revenue = app["declared_revenue"]
+    form = {"product_code": "EXPRESS", "amount": 300_000, "term_months": 6, "purpose": "OTHER"}
+    resp = u.call("POST", _url(app, "/submit"), json={**form, "amount": 700_000}, expect=409)
+    assert resp["detail"].startswith("Заявка не отправлена: в банке сохранены другие условия — сумма 300")
+    resp = u.call(
+        "POST", _url(app, "/submit"), json={**form, "owner_guarantee": True, "declared_revenue": 1}, expect=409
+    )
+    assert "в заявке нет поручительства собственника, а в форме оно есть" in resp["detail"]
+    assert "выручка" in resp["detail"]
+    assert u.get(app["id"])["status"] == "DRAFT"
+    body = {**form, "has_collateral": False, "owner_guarantee": False, "declared_revenue": revenue}
+    assert u.call("POST", _url(app, "/submit"), json=body)["status"] != "DRAFT"
 
 
 # --------------------------------------------------------------------------- долговая нагрузка

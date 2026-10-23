@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import type { Notification } from "../api/types";
 import { useAuth } from "../lib/auth";
 import { dateTime } from "../lib/format";
+import { savePending } from "../lib/pendingSaves";
 
 function Notifications() {
   const qc = useQueryClient();
@@ -152,7 +153,8 @@ export function Layout({ children, area }: { children: ReactNode; area: "client"
                 className="icon-btn"
                 aria-label="Выйти"
                 title="Выйти"
-                onClick={() => {
+                onClick={async () => {
+                  await savePending(); // правка в черновике, которую автосохранение ещё не отправило
                   logout();
                   nav("/login");
                 }}

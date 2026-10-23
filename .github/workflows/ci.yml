@@ -97,6 +97,12 @@ jobs:
           docker compose up -d --wait --wait-timeout 300
       - name: Postman-коллекция (newman)
         run: npx --yes newman@6.2.3 run docs/postman/smart-credit-cabinet.postman_collection.json --env-var baseUrl=http://localhost:8080
+      - name: Проверки интерфейса в браузере (Playwright)
+        # автосохранение черновика: сбой и медленный ответ не должны отправить заявку со старыми условиями
+        run: |
+          pip install playwright==1.64.1
+          python -m playwright install --with-deps chromium
+          python e2e/ui_checks.py --base-url http://localhost:8080
       - name: Проверка веб-интерфейса и Swagger
         run: |
           curl -fsS http://localhost:8080/ | grep -qi "<!doctype html"

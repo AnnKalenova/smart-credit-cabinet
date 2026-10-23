@@ -63,6 +63,7 @@ from app.schemas import (
     SignConfirmIn,
     SimulationIn,
     SimulationOut,
+    SubmitIn,
 )
 from app.security import get_client_application, hash_code, require_company_member, require_roles
 from app.services import assessment, storage
@@ -587,11 +588,58 @@ def submit_problems(db: Session, app: Application) -> list[str]:
     return problems
 
 
+def _require_same_terms(db: Session, app: Application, body: SubmitIn | None) -> None:
+    """Отправляется ровно то, что клиент видит в форме: если правка не сохранилась, условия разойдутся."""
+    if body is None:
+        return
+    diffs = []
+    if body.product_code is not None and body.product_code != app.product_code:
+        in_form = db.get(Product, body.product_code)
+        diffs.append(f"продукт «{app.product.name}», а в форме — «{in_form.name if in_form else body.product_code}»")
+    if body.purpose is not None and body.purpose != app.purpose:
+        diffs.append("другая цель кредита")
+    if body.amount is not None and abs(body.amount - float(app.amount)) >= 0.5:
+        diffs.append(f"сумма {fmt_money(app.amount)}, а в форме — {fmt_money(body.amount)}")
+    if body.term_months is not None and body.term_months != app.term_months:
+        diffs.append(f"срок {app.term_months} мес., а в форме — {body.term_months} мес.")
+    sent = body.model_dump(exclude_unset=True)
+    product = app.product
+    if "has_collateral" in sent and pledged(product, bool(body.has_collateral)) != pledged(product, app.has_collateral):
+        diffs.append(
+            "в заявке есть залог, а в форме его нет"
+            if pledged(product, app.has_collateral)
+            else "в заявке нет залога, а в форме он есть"
+        )
+    if "owner_guarantee" in sent and bool(body.owner_guarantee) != bool(app.owner_guarantee):
+        diffs.append(
+            "в заявке есть поручительство собственника, а в форме его нет"
+            if app.owner_guarantee
+            else "в заявке нет поручительства собственника, а в форме оно есть"
+        )
+    if "declared_revenue" in sent:
+        stored = float(app.declared_revenue) if app.declared_revenue else 0.0
+        if abs((body.declared_revenue or 0.0) - stored) >= 0.5:
+            diffs.append(f"выручка {fmt_money(stored)}, а в форме — {fmt_money(body.declared_revenue or 0)}")
+    if diffs:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Заявка не отправлена: в банке сохранены другие условия — "
+            + "; ".join(diffs)
+            + ". Обновите страницу, проверьте данные и отправьте ещё раз",
+        )
+
+
 @router.post("/{app_id}/submit", response_model=ApplicationOut, summary="Отправить заявку в банк")
-def submit(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends(client_only)):
+def submit(
+    app_id: uuid.UUID,
+    body: SubmitIn | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(client_only),
+):
     app, member = get_client_application(db, user, app_id)
     _require_signer(member)
     _require_status(app, AppStatus.DRAFT)
+    _require_same_terms(db, app, body)
     problems = submit_problems(db, app)
     if problems:
         raise HTTPException(

@@ -431,6 +431,34 @@ textarea {
 .panel-head h3 + * {
   margin-top: 0;
 }
+/* автосохранение не прошло: правки остались в форме, их можно отправить ещё раз */
+.save-error {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px 10px;
+  max-width: 60%;
+  color: var(--negative);
+  text-align: right;
+}
+.save-error .btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--negative);
+  font-weight: 600;
+}
+@media (max-width: 560px) {
+  .panel-head:has(.save-error) {
+    flex-wrap: wrap;
+  }
+  .save-error {
+    max-width: none;
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
 .panel-flat {
   background: var(--surface-2);
   border-radius: 16px;

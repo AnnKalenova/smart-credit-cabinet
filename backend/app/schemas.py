@@ -366,6 +366,21 @@ class ReapplyIn(ConditionsIn):
     )
 
 
+class SubmitIn(InModel):
+    """Условия, которые клиент видит в форме на момент отправки. Если сохранённая заявка отличается от них
+    (например, автосохранение не дошло до банка), заявка не отправляется — 409."""
+
+    product_code: Code | None = None
+    amount: Money | None = None
+    term_months: Term | None = None
+    purpose: Code | None = None
+    has_collateral: bool | None = None
+    owner_guarantee: bool | None = None
+    declared_revenue: Annotated[
+        float | None, Field(ge=0, le=MAX_REVENUE, allow_inf_nan=False), BeforeValidator(_not_bool)
+    ] = None
+
+
 class SignatureRequestIn(InModel):
     conditions: ConditionsIn | None = Field(
         default=None, description="Условия из конструктора, на которых сотрудник предлагает подать новую заявку"

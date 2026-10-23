@@ -361,7 +361,7 @@ export function ApplicationPage() {
 
       <div className="grid-2" style={{ marginTop: 22 }}>
         <div className="stack">
-          {s === "DRAFT" && <DraftEditor app={app} />}
+          {s === "DRAFT" && <DraftEditor key={app.id} app={app} />}
           {["SUBMITTED", "PRECHECK", "ENRICHMENT", "SCORING", "DECISION"].includes(s) && <ProcessingPanel app={app} />}
           {s === "MANUAL_REVIEW" && <ReviewPanel app={app} />}
           {s === "MANUAL_REVIEW" && <ConditionsBuilder app={app} />}
