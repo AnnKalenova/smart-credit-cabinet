@@ -41,7 +41,7 @@ from app.models import (
 )
 from app.schemas import BankApplicationRow, BankDecisionIn, FaultIn, MessageIn, MessageOut, SettingIn, SettingOut
 from app.security import require_roles
-from app.services import storage
+from app.services import assessment, storage
 from app.services.pipeline import create_offers
 from app.services.views import (
     bank_application_out,
@@ -335,6 +335,13 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
                 params, o.amount, o.term_months, rate, pricing, app.owner_guarantee, not same, label, app.has_collateral
             )
             drafts.append(draft)
+        # Ограничение нагрузки 40% действует и для решения специалиста: рекомендация могла быть рассчитана до того,
+        # как у компании появились другие кредиты. Принятия предложений по компании идут по очереди — здесь тоже
+        lock_key(db, f"company-load:{app.company_id}")
+        load = assessment.current_load(db, app)
+        for i, d in enumerate(drafts, start=1):
+            if not load.fits(d.monthly_payment):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, load.analyst_refusal(i, d.monthly_payment))
         # Одобрение, если среди вариантов есть запрошенные условия; иначе — встречное предложение
         outcome = DecisionOutcome.APPROVE if any(not d.is_counter for d in drafts) else DecisionOutcome.COUNTER_OFFER
         decision = Decision(
@@ -350,7 +357,13 @@ def decide(app_id: uuid.UUID, body: BankDecisionIn, db: Session = Depends(get_db
                     "client_text": body.message_to_client or "",
                 }
             ],
-            details={"offers": [d.to_dict() for d in drafts], "key_rate": kr, "grade": grade},
+            details={
+                "offers": [d.to_dict() for d in drafts],
+                "key_rate": kr,
+                "grade": grade,
+                # нагрузка, с которой специалист принимал решение: при принятии предложения она перепроверяется
+                "existing_monthly_payments": round(load.existing, 2),
+            },
             policy_version=POLICY_VERSION,
             decided_by_id=user.id,
             comment_internal=body.comment_internal,

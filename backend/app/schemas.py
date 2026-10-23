@@ -249,6 +249,8 @@ class OfferOut(BaseModel):
     status: str
     valid_until: datetime
     schedule_preview: list[dict[str, Any]]
+    # почему вариант нельзя принять: после решения у компании появились кредиты и платёж не помещается в нагрузку
+    unavailable_reason: str | None = None
 
 
 class EventOut(BaseModel):

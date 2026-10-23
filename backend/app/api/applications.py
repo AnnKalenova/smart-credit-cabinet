@@ -37,6 +37,7 @@ from app.models import (
     Company,
     CompanyMember,
     Consent,
+    Decision,
     InfoRequest,
     Loan,
     Message,
@@ -698,6 +699,12 @@ def accept_offer(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Предложение не найдено")
     if offer.valid_until < utcnow():
         raise HTTPException(status.HTTP_409_CONFLICT, "Срок действия предложения истёк")
+    # Принятое предложение становится обязательством компании. Принятия по разным заявкам одной компании
+    # идут по очереди, и каждое видит уже принятые: вместе они не обойдут ограничение долговой нагрузки
+    lock_key(db, f"company-load:{app.company_id}")
+    room = assessment.load_room(db, app, db.get(Decision, offer.decision_id))
+    if room is not None and not room.fits(float(offer.monthly_payment)):
+        raise HTTPException(status.HTTP_409_CONFLICT, room.refusal(float(offer.monthly_payment)))
     for o in db.scalars(select(Offer).where(Offer.application_id == app.id, Offer.status == OfferStatus.ACTIVE)):
         o.status = OfferStatus.SUPERSEDED
     offer.status = OfferStatus.ACCEPTED
@@ -748,6 +755,9 @@ def _require_new_conditions(db: Session, parent: Application, body: ApplicationC
                 and o.term_months == body.term_months
                 and abs(float(o.amount) - body.amount) < 0.5
             ):
+                room = assessment.load_room(db, parent, db.get(Decision, o.decision_id))
+                if room is not None and not room.fits(float(o.monthly_payment)):
+                    return  # вариант уже не помещается в нагрузку: новая заявка рассчитает его заново
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
                     "Этот вариант есть в предложении банка — выберите его, новая заявка не нужна",

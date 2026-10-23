@@ -126,6 +126,12 @@ class Simulator:
             if app.status == AppStatus.OFFER_READY
             else []
         )
+        if self.offers:
+            room = assessment.load_room(db, app, db.get(Decision, self.offers[0].decision_id))
+            if room is not None:
+                # после решения у компании появились кредиты: вариант, который не помещается в нагрузку,
+                # принять нельзя — такие условия конструктор считает заново, как для новой заявки
+                self.offers = [o for o in self.offers if room.fits(float(o.monthly_payment))]
 
     # ------------------------------------------------------------------ параметры
 

@@ -4434,6 +4434,17 @@
             },
             "type": "array",
             "title": "Schedule Preview"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Reason"
           }
         },
         "type": "object",

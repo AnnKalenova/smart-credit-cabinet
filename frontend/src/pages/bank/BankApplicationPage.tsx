@@ -177,6 +177,13 @@ function DecisionForm({ app }: { app: BankApplication }) {
                 <Plus size={15} /> Добавить вариант
               </button>
             )}
+            {app.load && (
+              <p className="xs muted">
+                {`Свободно под новый платёж: ${money(app.load.room)} в месяц — ${pct(app.load.cap * 100)} поступлений `}
+                {`(${money(app.load.monthly_income * app.load.cap)}) минус платежи по текущим кредитам компании `}
+                {`(${money(app.load.existing_monthly_payments)}). Вариант с платежом больше этого отправить нельзя.`}
+              </p>
+            )}
           </>
         )}
         {action === "REQUEST_INFO" && (

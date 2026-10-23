@@ -343,6 +343,30 @@ def scenario_empty_source_answer(base: str) -> str:
     return f"ЕГРЮЛ вернул {{}} (попыток: {len(calls)}) → заявка у специалиста; после повтора проверки — «{status}»"
 
 
+def scenario_offers_beyond_load_cap(base: str) -> str:
+    c = Client(base, "smirnov")
+    analyst = Client(base, "analyst")
+    first = submit_and_wait(c, prepare(c, "WORKING_CAPITAL", "WORKING_CAPITAL", 6_000_000, 12)["id"])
+    assert first["status"] == "OFFER_READY", first["status"]
+    details = analyst.req("GET", f"/api/v1/bank/applications/{first['id']}")["decisions"][0]["details"]
+    payment = first["offers"][0]["monthly_payment"]
+    room = 0.4 * details["effective_monthly_turnover"] - details["existing_monthly_payments"]
+    fit = int(room // payment)
+    # все предложения получены до первого принятия: каждое по отдельности укладывается в ограничение 40%
+    apps = [first] + [
+        submit_and_wait(c, prepare(c, "WORKING_CAPITAL", "WORKING_CAPITAL", 6_000_000, 12)["id"]) for _ in range(fit)
+    ]
+    for app in apps[:fit]:
+        accept_sign_issue(c, app)
+    last = c.req("GET", f"/api/v1/applications/{apps[-1]['id']}")
+    offer = last["offers"][0]
+    assert offer["unavailable_reason"], "вариант сверх нагрузки не помечен"
+    c.req("POST", f"/api/v1/applications/{last['id']}/offers/{offer['id']}/accept", expect=409)
+    return (
+        f"предложений по {money(offer['amount'])} ₽: {fit + 1}, выдано {fit}, последнее не принято — нагрузка выше 40%"
+    )
+
+
 SCENARIOS = [
     ("Автоматическое одобрение", scenario_auto_approve),
     # конструктор — раньше встречного предложения: тот сценарий выдаёт кредит, и долговая нагрузка
@@ -355,6 +379,7 @@ SCENARIOS = [
     ("Запрос уточнений → одобрение", scenario_needs_info),
     ("Права подписи (бухгалтер/директор)", scenario_accountant),
     ("Пустой ответ ЕГРЮЛ → специалист", scenario_empty_source_answer),
+    ("Несколько предложений сверх ограничения нагрузки", scenario_offers_beyond_load_cap),
 ]
 
 

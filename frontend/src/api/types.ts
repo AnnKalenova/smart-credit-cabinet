@@ -159,6 +159,8 @@ export interface Offer {
   status: string;
   valid_until: string;
   schedule_preview: ScheduleRow[];
+  /** почему вариант нельзя принять: после решения у компании появились кредиты и платёж не помещается в нагрузку */
+  unavailable_reason?: string | null;
 }
 
 export interface AppEvent {
@@ -471,6 +473,14 @@ export interface PricingHint {
   max_rate: number;
 }
 
+/** Место под новый платёж в ограничении долговой нагрузки — для решения специалиста. */
+export interface LoadInfo {
+  existing_monthly_payments: number;
+  monthly_income: number;
+  cap: number;
+  room: number;
+}
+
 export interface BankApplication extends BankRow {
   purpose: string;
   purpose_details: string | null;
@@ -528,6 +538,7 @@ export interface BankApplication extends BankRow {
   documents: DocumentInfo[];
   consents: { type: string; signed_at: string; signed_by: string }[];
   loan: Loan | null;
+  load: LoadInfo | null;
   permissions: { can_decide: boolean; can_rerun: boolean; can_retry_disbursement: boolean };
   pricing_hints: PricingHint[];
   key_rate: number;

@@ -44,6 +44,7 @@ from app.models import (
     ScoringResult,
     User,
 )
+from app.services import assessment
 from app.services.workflow import local_today, utcnow
 
 
@@ -99,7 +100,7 @@ def schedule_for(offer) -> list[dict]:
     return build_annuity_schedule(float(offer.amount), float(offer.rate), offer.term_months, start)
 
 
-def offer_out(o: Offer, full_schedule: bool = False) -> dict:
+def offer_out(o: Offer, full_schedule: bool = False, unavailable_reason: str | None = None) -> dict:
     schedule = schedule_for(o)
     return {
         "id": o.id,
@@ -118,7 +119,23 @@ def offer_out(o: Offer, full_schedule: bool = False) -> dict:
         "status": o.status,
         "valid_until": o.valid_until,
         "schedule_preview": schedule if full_schedule else schedule[:6],
+        # вариант больше не помещается в ограничение нагрузки: после решения у компании появились кредиты
+        "unavailable_reason": unavailable_reason,
     }
+
+
+def offers_out(db: Session, app: Application, offers: list[Offer]) -> list[dict]:
+    """Варианты предложения. Пока их можно принять, каждый сверяется с текущей нагрузкой компании — так же,
+    как при принятии: клиент заранее видит, что вариант не подойдёт, и почему."""
+    room = None
+    if app.status == AppStatus.OFFER_READY and offers:
+        room = assessment.load_room(db, app, db.get(Decision, offers[0].decision_id))
+    out = []
+    for o in offers:
+        payment = float(o.monthly_payment)
+        reason = room.refusal(payment) if room is not None and not room.fits(payment) else None
+        out.append(offer_out(o, unavailable_reason=reason))
+    return out
 
 
 def event_out(e: ApplicationEvent) -> dict:
@@ -469,7 +486,7 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
             "info_request": info_request_out(info, db)
             if info and (info.status == InfoRequestStatus.OPEN or app.status != AppStatus.DRAFT)
             else None,
-            "offers": [offer_out(o) for o in offers],
+            "offers": offers_out(db, app, offers),
             "decision": client_decision_view(db, app),
             "events": [event_out(e) for e in events],
             "loan": loan_out(loan, app, with_schedule=False) if loan else None,
@@ -724,6 +741,11 @@ def bank_application_out(db: Session, app: Application) -> dict:
         "documents": [document_out(d) for d in app.documents],
         "consents": consents,
         "loan": loan_out(loan, app) if loan else None,
+        # сколько места под новый платёж в ограничении 40% — с учётом всех кредитов компании на сейчас
+        # (без отчёта БКИ кредиты в других банках неизвестны, а одобрить такую заявку всё равно нельзя)
+        "load": assessment.current_load(db, app).to_dict()
+        if app.status == AppStatus.MANUAL_REVIEW and "BKI" in sources
+        else None,
         "permissions": {
             "can_decide": app.status == AppStatus.MANUAL_REVIEW,
             "can_rerun": app.status == AppStatus.MANUAL_REVIEW,

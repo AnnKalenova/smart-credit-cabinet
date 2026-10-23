@@ -190,6 +190,8 @@ def test_manual_review_and_analyst_approval(login):
     app = c.get(app["id"])
     assert app["status"] == "OFFER_READY"
     assert app["decision"]["kind"] == "MANUAL" and app["decision"]["message"] == "Одобрено, залог — станок"
+    # нагрузка, с которой специалист принимал решение, — для перепроверки при принятии предложения
+    assert a.call("GET", _bank(app))["decisions"][0]["details"]["existing_monthly_payments"] >= 0
     assert any(m["author_role"] == "ANALYST" for m in c.call("GET", _url(app, "/messages")))
     assert c.accept_and_sign(app)["status"] == "ISSUED"
     dossier = a.call("GET", _bank(app))

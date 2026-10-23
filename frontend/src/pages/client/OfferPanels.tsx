@@ -123,8 +123,14 @@ export function OfferTicket({
             <li key={c}>{c}</li>
           ))}
         </ul>
+        {offer.unavailable_reason && (
+          <div className="callout warn">
+            <Info size={18} />
+            <span>{offer.unavailable_reason}</span>
+          </div>
+        )}
         <div className="row-wrap">
-          {action}
+          {!offer.unavailable_reason && action}
           <button className="btn-link small" onClick={() => setShowPricing((s) => !s)}>
             {showPricing ? "Скрыть расчёт ставки" : "Из чего складывается ставка"}
           </button>

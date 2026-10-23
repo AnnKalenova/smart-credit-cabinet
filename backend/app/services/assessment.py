@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,7 @@ from app.domain.enums import AppStatus, DecisionKind, DecisionOutcome, DocType, 
 from app.domain.finance import floor_to, offer_economics
 from app.domain.policy import (
     CONFIRMED_REVENUE_CAP,
+    DTI_CAP,
     GRADE_LIMIT_FACTOR,
     MANUAL_DECLINE_MEMORY_DAYS,
     STATEMENT_HAIRCUT,
@@ -24,7 +26,7 @@ from app.domain.policy import (
 )
 from app.domain.products import pledged, required_documents
 from app.domain.scoring import Factor, ScoringInput, ScoringOutcome, TurnoverStats, months_between, turnover_stats
-from app.domain.text import fmt_money, months_range
+from app.domain.text import fmt_money, fmt_rate, months_range
 from app.models import (
     AccountTurnover,
     Application,
@@ -86,6 +88,96 @@ def own_obligations(db: Session, company_id, exclude_app_id=None) -> float:
         q = q.where(Application.id != exclude_app_id)
     total += sum(float(x) for x in db.scalars(q))
     return round(total, 2)
+
+
+def existing_payments(db: Session, app: Application, sources: dict[str, dict] | None = None) -> float:
+    """Все платежи компании по кредитам, кроме этой заявки: другие банки (по отчёту БКИ из этой заявки)
+    и наш банк (выданные кредиты, договоры на подписании и в выдаче)."""
+    bki = (enrichment(db, app.id) if sources is None else sources).get("BKI", {})
+    return round(float(bki.get("total_monthly_payment", 0) or 0) + own_obligations(db, app.company_id, app.id), 2)
+
+
+def _pct(share: float) -> str:
+    return fmt_rate(round(share * 100, 1))  # 46,1% и 40%
+
+
+@dataclass
+class LoadRoom:
+    """Сколько места под новый платёж осталось в ограничении долговой нагрузки (DTI_CAP)."""
+
+    existing: float  # платежи по остальным кредитам компании
+    income: float  # месячные поступления, от которых считается ограничение
+    new_obligations: bool = True  # нагрузка выросла после решения банка (False — неизвестно, с какой он решал)
+
+    @property
+    def room(self) -> float:
+        return DTI_CAP * self.income - self.existing
+
+    def fits(self, payment: float) -> bool:
+        return payment <= self.room + 0.5  # копейки округления платежа не в счёт
+
+    def share(self, payment: float) -> float:
+        return (self.existing + payment) / self.income if self.income > 0 else 1.0
+
+    def _over(self, payment: float) -> str:
+        return (
+            f"вместе с ним платежи по кредитам компании составят {_pct(self.share(payment))} поступлений на счёт, "
+            f"а допустимо не больше {_pct(DTI_CAP)}"
+        )
+
+    def _room_text(self) -> str:
+        if self.room >= 1000:
+            return f"Сейчас помещается платёж до {fmt_money(floor_to(self.room, 100))} в месяц"
+        return "Свободного места под новый платёж сейчас нет"
+
+    def refusal(self, payment: float) -> str:
+        """Почему клиенту нельзя принять вариант."""
+        lead = (
+            "После решения банка у компании появились новые кредиты, и этот вариант больше не помещается"
+            if self.new_obligations
+            else "Этот вариант не помещается"
+        )
+        tail = (
+            " — выберите вариант с меньшим платежом или подберите условия в конструкторе"
+            if self.room >= 1000
+            else ". Подберите условия в конструкторе: он учитывает все действующие кредиты"
+        )
+        return f"{lead} в допустимую долговую нагрузку: {self._over(payment)}. {self._room_text()}{tail}"
+
+    def analyst_refusal(self, number: int, payment: float) -> str:
+        """Почему специалист не может предложить вариант."""
+        return (
+            f"Вариант {number}: платёж {fmt_money(payment)} в месяц не помещается в ограничение долговой нагрузки — "
+            f"{self._over(payment)}. {self._room_text()}"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "existing_monthly_payments": round(self.existing, 2),
+            "monthly_income": round(self.income, 2),
+            "cap": DTI_CAP,
+            "room": floor_to(self.room, 100),  # как в тексте отказа: «помещается платёж до …»
+        }
+
+
+def current_load(db: Session, app: Application) -> LoadRoom:
+    """Нагрузка компании сейчас: все её платежи по кредитам, кроме этой заявки, и поступления на счёт."""
+    return LoadRoom(existing_payments(db, app), effective_turnover(company_turnover(db, app.company_id), app))
+
+
+def load_room(db: Session, app: Application, decision: Decision | None) -> LoadRoom | None:
+    """Перепроверка нагрузки перед принятием предложения. Решение банка считало нагрузку на свой момент;
+    если с тех пор у компании появились новые обязательства (выдан кредит или подписывается договор по другой
+    заявке), возвращает остаток места под платёж. None — новых обязательств нет, решение учитывает всю нагрузку.
+
+    Так несколько одновременно полученных предложений нельзя принять сверх ограничения 40%. Решение без
+    сохранённой нагрузки (принятое до этой проверки) перепроверяется всегда."""
+    existing = existing_payments(db, app)
+    known = (decision.details or {}).get("existing_monthly_payments") if decision else None
+    if known is not None and existing <= float(known) + 0.5:
+        return None
+    income = effective_turnover(company_turnover(db, app.company_id), app)
+    return LoadRoom(existing, income, new_obligations=known is not None)
 
 
 def prior_manual_decline(db: Session, company_id, exclude_app_id, as_of: date) -> str | None:
@@ -181,8 +273,7 @@ def build_policy_input(
         as_of=as_of,
         avg_monthly_turnover=stats.avg_monthly,
         effective_monthly_turnover=effective_turnover(stats, app),
-        existing_monthly_payments=float(sources.get("BKI", {}).get("total_monthly_payment", 0) or 0)
-        + own_obligations(db, company.id, app.id),
+        existing_monthly_payments=existing_payments(db, app, sources),
         bank_tenure_months=months_between(company.client_since, as_of),
         business_age_months=months_between(company.registration_date, as_of),
         scoring=scoring,
