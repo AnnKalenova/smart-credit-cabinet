@@ -77,7 +77,11 @@ def test_revolving_schedule_is_interest_only_until_maturity():
 
 def test_offer_economics_annuity_and_revolving():
     monthly, interest = offer_economics(1_000_000, 22.0, 24, "ANNUITY")
-    assert interest == pytest.approx(monthly * 24 - 1_000_000, abs=0.01)
+    rows = build_annuity_schedule(1_000_000, 22.0, 24, date(2026, 1, 15))
+    # переплата в предложении совпадает с суммой процентов в графике до копейки
+    assert interest == pytest.approx(sum(r["interest"] for r in rows), abs=0.001)
+    assert monthly == rows[0]["payment"]
+    assert abs(interest - (monthly * 24 - 1_000_000)) < 2  # последний платёж выравнивает остаток
     monthly_od, interest_od = offer_economics(500_000, 24.0, 12, "REVOLVING")
     assert monthly_od == 10_000
     assert interest_od == 120_000
@@ -122,3 +126,9 @@ def test_synthetic_ogrn_check_digits():
     assert len(ogrn) == 13 and int(ogrn[:12]) % 11 % 10 == int(ogrn[12])
     ogrnip = gen.ogrnip(2024, 220512)
     assert len(ogrnip) == 15 and int(ogrnip[:14]) % 13 % 10 == int(ogrnip[14])
+
+
+def test_rounding_is_half_up_to_kopecks():
+    from app.domain.finance import r2
+
+    assert r2(0.125) == 0.13 and r2(2.675) == 2.68 and r2(-0.125) == -0.13

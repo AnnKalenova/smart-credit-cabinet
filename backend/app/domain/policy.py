@@ -13,20 +13,24 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 
 from app.domain.enums import DecisionOutcome
 from app.domain.finance import annuity_principal, floor_to, monthly_rate, offer_economics
-from app.domain.products import NICE_TERMS, pledged
-from app.domain.scoring import ScoringOutcome, months_between
+from app.domain.products import NICE_TERMS, pledged, required_documents
+from app.domain.scoring import ScoringOutcome, director_changed_recently
 
-POLICY_VERSION = "credit-policy-1.0"
+POLICY_VERSION = "credit-policy-1.1"
 DTI_CAP = 0.40  # все платежи по кредитам — не более 40% месячных поступлений
 GRADE_LIMIT_FACTOR = {"A": 1.0, "B": 0.9, "C": 0.75, "D": 0.6, "E": 0.0}
 GRADE_PREMIUM = {"A": 0.0, "B": 1.0, "C": 2.5, "D": 4.0, "E": 6.0}
 REVENUE_MISMATCH_RATIO = 1.6  # заявленная выручка больше годовых поступлений на счёт в 1,6 раза
 STATEMENT_HAIRCUT = 0.8  # подтверждённая выпиской выручка учитывается с дисконтом 20%
+# ...и не больше чем вдвое выше поступлений на счёт в банке: выписку из другого банка прототип не разбирает
+CONFIRMED_REVENUE_CAP = 2.0
 TAX_ARREARS_MANUAL = 300_000
 
 
@@ -45,6 +49,7 @@ class ProductParams:
     auto_decision_limit: float
     repayment_type: str
     collateral: str
+    doc_rules: list = field(default_factory=list)
 
     @classmethod
     def from_orm(cls, p) -> ProductParams:
@@ -62,6 +67,7 @@ class ProductParams:
             auto_decision_limit=float(p.auto_decision_limit),
             repayment_type=p.repayment_type,
             collateral=p.collateral,
+            doc_rules=list(getattr(p, "doc_rules", None) or []),
         )
 
 
@@ -119,6 +125,8 @@ class PolicyInput:
     egrul: dict
     fns: dict
     bki: dict
+    documents: set[str] = field(default_factory=set)  # типы приложенных документов
+    registration_date: date | None = None
 
 
 @dataclass
@@ -132,6 +140,18 @@ class PolicyResult:
 
 
 # --------------------------------------------------------------------------- ценообразование и лимит
+
+
+def round_rate(value: float) -> float:
+    """Ставка округляется до 0,1 п.п. по правилу «половина — вверх»."""
+    return float(Decimal(str(round(value, 6))).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def rate_bounds(product: ProductParams, key_rate: float) -> tuple[float, float]:
+    """Коридор ставок продукта, округлённый внутрь: от «ключевая + 1» до «ключевая + максимальная надбавка»."""
+    low = math.ceil(round((key_rate + 1.0) * 10, 6)) / 10
+    high = math.floor(round((key_rate + product.max_spread) * 10, 6)) / 10
+    return low, max(low, high)
 
 
 def price(
@@ -152,12 +172,15 @@ def price(
     if owner_guarantee:
         parts.append({"label": "Скидка за поручительство собственника", "value": -0.5})
     if tenure_months >= 24:
-        parts.append({"label": "Скидка клиенту банка дольше 2 лет", "value": -0.5})
+        parts.append({"label": "Скидка для клиентов банка более 2 лет", "value": -0.5})
     raw = sum(p["value"] for p in parts)
-    rate = min(max(raw, key_rate + 1.0), key_rate + product.max_spread)
-    rate = round(rate, 1)
-    if rate != round(raw, 1):
-        parts.append({"label": "Ограничение диапазона ставок продукта", "value": round(rate - raw, 2)})
+    rounded = round_rate(raw)
+    if abs(rounded - raw) > 1e-9:
+        parts.append({"label": "Округление до 0,1 п.п.", "value": round(rounded - raw, 2)})
+    low, high = rate_bounds(product, key_rate)
+    rate = min(max(rounded, low), high)
+    if abs(rate - rounded) > 1e-9:
+        parts.append({"label": "Ограничение диапазона ставок продукта", "value": round(rate - rounded, 2)})
     return rate, parts
 
 
@@ -389,9 +412,8 @@ def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info:
                 "",
             )
         )
-    director_since = inp.egrul.get("director", {}).get("since")
-    if director_since and months_between(date.fromisoformat(director_since), inp.as_of) < 6:
-        since = date.fromisoformat(director_since).strftime("%d.%m.%Y")
+    if director_changed_recently(inp.egrul, inp.registration_date, inp.as_of):
+        since = date.fromisoformat(inp.egrul["director"]["since"]).strftime("%d.%m.%Y")
         reasons.append(Reason("director_changed", "MANUAL", f"Смена руководителя {since}", ""))
     if unresolved_info:
         reasons.append(
@@ -400,6 +422,20 @@ def manual_triggers(inp: PolicyInput, offers: list[OfferDraft], unresolved_info:
                 "MANUAL",
                 "Расхождение заявленной выручки и оборотов не устранено после запросов",
                 "Специалист проверит предоставленные документы",
+            )
+        )
+    if (
+        inp.revenue_confirmed
+        and inp.declared_revenue
+        and inp.declared_revenue / 12 * STATEMENT_HAIRCUT > inp.avg_monthly_turnover * CONFIRMED_REVENUE_CAP
+    ):
+        # выручку по выписке учитываем не выше двойных оборотов, а остальное должен увидеть человек
+        reasons.append(
+            Reason(
+                "revenue_unverified",
+                "MANUAL",
+                "Выручка по выписке другого банка более чем вдвое выше поступлений на счёт — проверьте выписку",
+                "Специалист проверит выписку из другого банка",
             )
         )
     return reasons
@@ -524,6 +560,10 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
             for alt in inp.alt_products:
                 if alt.code == product.code or inp.purpose not in alt.purposes:
                     continue
+                # другой продукт предлагается, только если для него ничего не нужно дополнительно:
+                # ни залога (его нет в заявке), ни документов, которых клиент не прикладывал
+                if alt.collateral == "REQUIRED":
+                    continue
                 alt_rate, alt_pricing = price(
                     alt,
                     inp.scoring.grade,
@@ -542,6 +582,8 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
                     inp.existing_monthly_payments,
                 )
                 amount = min(inp.amount, alt_limit)
+                if set(required_documents(alt, amount, inp.purpose, inp.company_kind)) - inp.documents:
+                    continue
                 if amount >= alt.min_amount:
                     offers.append(
                         _offer(

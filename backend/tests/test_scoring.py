@@ -85,7 +85,7 @@ def test_strong_company_gets_grade_a_and_transparent_factors():
     assert pts["bank_tenure"] == 15
     assert pts["turnover_stability"] == 25
     assert pts["turnover_trend"] == 0
-    assert pts["debt_load"] == 40  # (78k + 270k) / 4,6 млн ≈ 7,6%
+    assert pts["debt_load"] == 40  # текущие платежи 78 тыс. / 4,6 млн ≈ 1,7%
     assert pts["credit_history"] == 40
     assert pts["tax_arrears"] == 10
     assert pts["industry"] == 10
@@ -94,7 +94,9 @@ def test_strong_company_gets_grade_a_and_transparent_factors():
     assert out.score == BASE_SCORE + sum(pts.values())
     assert out.grade == "A"
     assert out.pd == GRADE_PD["A"]
-    assert out.metrics["dti"] == pytest.approx((78_000 + 270_000) / 4_600_000, abs=1e-4)
+    assert out.metrics["dti"] == pytest.approx(78_000 / 4_600_000, abs=1e-4)
+    # с новым кредитом — только для справки аналитику, в баллы не входит
+    assert out.metrics["dti_with_new"] == pytest.approx((78_000 + 270_000) / 4_600_000, abs=1e-4)
     assert all(f.comment for f in out.factors)
 
 
@@ -117,7 +119,7 @@ def test_weak_company_hits_every_negative_factor_and_is_clipped():
                 "mass_address": True,
             },
             bki={
-                "total_monthly_payment": 50_000,
+                "total_monthly_payment": 150_000,
                 "max_overdue_days_12m": 120,
                 "history_length_months": 30,
                 "inquiries_30d": 6,
@@ -180,3 +182,38 @@ def test_credit_history_buckets(overdue, history, expected):
         "inquiries_30d": 0,
     }
     assert _points(score(_input(bki=bki)))["credit_history"] == expected
+
+
+def test_requested_loan_does_not_change_the_grade():
+    """Рейтинг — о заёмщике, а не о запросе: иначе ставка встречного варианта зависела бы от отклонённой суммы."""
+    small = score(_input(new_monthly_payment=10_000))
+    huge = score(_input(new_monthly_payment=5_000_000))
+    assert small.score == huge.score and small.grade == huge.grade
+
+
+def test_loans_already_issued_by_the_bank_add_to_debt_load():
+    clean = _points(score(_input()))["debt_load"]
+    loaded = _points(score(_input(other_monthly_payments=1_500_000)))["debt_load"]
+    assert clean == 40 and loaded == -30  # (78 тыс. + 1,5 млн) / 4,6 млн ≈ 34%
+
+
+def test_director_appointed_at_registration_is_not_a_change():
+    young = _input(
+        registration_date=date(2026, 6, 10),
+        egrul={"status": "ACTIVE", "director": {"since": "2026-06-10"}},
+    )
+    assert _points(score(young))["registry_flags"] == 0
+    changed = _input(egrul={"status": "ACTIVE", "director": {"since": "2026-08-01"}})
+    assert _points(score(changed))["registry_flags"] == -15
+    assert _points(score(_input(egrul={"status": "ACTIVE", "director": None})))["registry_flags"] == 0
+
+
+def test_month_end_counts_as_full_month():
+    assert months_between(date(2025, 11, 30), date(2026, 2, 28)) == 3
+    assert months_between(date(2024, 2, 29), date(2025, 2, 28)) == 12
+    assert months_between(date(2026, 1, 31), date(2026, 2, 27)) == 0
+
+
+def test_stability_needs_at_least_three_months_of_data():
+    out = score(_input(turnover=TurnoverStats(months=1, avg_monthly=4_600_000, cv=0.0, trend=0.0, series=[])))
+    assert _points(out)["turnover_stability"] == 0

@@ -10,11 +10,14 @@
 
 from __future__ import annotations
 
+import calendar
 import statistics
 from dataclasses import asdict, dataclass, field
 from datetime import date
 
-MODEL_VERSION = "scorecard-1.0"
+from app.domain.text import plural
+
+MODEL_VERSION = "scorecard-1.1"
 BASE_SCORE = 600
 GRADE_THRESHOLDS: list[tuple[int, str]] = [(700, "A"), (650, "B"), (600, "C"), (550, "D")]
 GRADE_PD = {"A": 0.008, "B": 0.02, "C": 0.045, "D": 0.09, "E": 0.18}
@@ -58,8 +61,10 @@ def turnover_stats(rows: list[tuple[date, float, float]]) -> TurnoverStats:
 
 
 def months_between(start: date, end: date) -> int:
+    """Полных месяцев между датами. Конец месяца считается полным месяцем: 30.11 → 28.02 — три месяца."""
     months = (end.year - start.year) * 12 + (end.month - start.month)
-    if end.day < start.day:
+    end_is_month_end = end.day == calendar.monthrange(end.year, end.month)[1]
+    if end.day < start.day and not end_is_month_end:
         months -= 1
     return max(months, 0)
 
@@ -73,12 +78,13 @@ class ScoringInput:
     okved_code: str
     turnover: TurnoverStats
     effective_monthly_turnover: float  # обороты с учётом подтверждённой выручки в других банках
-    new_monthly_payment: float  # платёж по запрашиваемому кредиту по индикативной ставке
+    new_monthly_payment: float  # платёж по запрашиваемому кредиту — только для справки аналитику, в баллы не входит
     egrul: dict
     fns: dict
     bki: dict
     has_collateral: bool
     owner_guarantee: bool
+    other_monthly_payments: float = 0.0  # платежи по кредитам, уже выданным этим банком (в БКИ их ещё нет)
 
 
 @dataclass
@@ -119,6 +125,17 @@ def _pct(v: float) -> str:
     return f"{v * 100:.0f}%"
 
 
+def director_changed_recently(egrul: dict, registration_date: date | None, as_of: date) -> bool:
+    """Руководитель сменился меньше полугода назад. Назначение при регистрации компании — не смена."""
+    since = (egrul.get("director") or {}).get("since")
+    if not since:
+        return False
+    since_date = date.fromisoformat(since)
+    if registration_date and since_date <= registration_date:
+        return False
+    return months_between(since_date, as_of) < 6
+
+
 def grade_for(score: int) -> str:
     for threshold, grade in GRADE_THRESHOLDS:
         if score >= threshold:
@@ -153,7 +170,9 @@ def score(inp: ScoringInput) -> ScoringOutcome:
 
     # 3. Стабильность поступлений
     cv = inp.turnover.cv
-    if cv < 0.15:
+    if inp.turnover.months < 3:
+        pts, txt = 0, "Поступлений на счёт пока мало, чтобы оценить их стабильность"
+    elif cv < 0.15:
         pts, txt = 25, "Поступления на счёт стабильны от месяца к месяцу"
     elif cv < 0.35:
         pts, txt = 5, "Поступления колеблются умеренно"
@@ -171,21 +190,25 @@ def score(inp: ScoringInput) -> ScoringOutcome:
         pts, txt = -35, "Обороты за последние 3 месяца заметно снизились"
     factors.append(Factor("turnover_trend", "Динамика оборотов", f"{tr * 100:+.0f}%".replace("-", "−"), pts, txt, txt))
 
-    # 5. Долговая нагрузка (все платежи по кредитам / месячные поступления)
-    existing = float(inp.bki.get("total_monthly_payment", 0) or 0)
+    # 5. Текущая долговая нагрузка: платежи по действующим кредитам / месячные поступления.
+    # Новый кредит в баллы не входит — иначе рейтинг (а с ним ставка) зависел бы от запрошенной суммы.
+    # Хватит ли поступлений на новый платёж, проверяет кредитная политика: лимит 40% нагрузки.
+    existing = float(inp.bki.get("total_monthly_payment", 0) or 0) + inp.other_monthly_payments
     base = inp.effective_monthly_turnover
-    dti = (existing + inp.new_monthly_payment) / base if base > 0 else 9.99
-    if dti < 0.10:
-        pts, txt = 40, "Платежи по кредитам займут меньше 10% поступлений"
+    dti = existing / base if base > 0 else 9.99
+    if base <= 0:
+        pts, txt = -70, "Поступлений на счёт нет — обслуживать кредиты не из чего"
+    elif dti < 0.10:
+        pts, txt = 40, "Платежи по текущим кредитам — меньше 10% поступлений"
     elif dti < 0.20:
-        pts, txt = 20, "Платежи по кредитам займут 10–20% поступлений"
+        pts, txt = 20, "Платежи по текущим кредитам — 10–20% поступлений"
     elif dti < 0.30:
-        pts, txt = 0, "Платежи по кредитам займут 20–30% поступлений"
+        pts, txt = 0, "Платежи по текущим кредитам — 20–30% поступлений"
     elif dti < 0.40:
-        pts, txt = -30, "Платежи по кредитам займут 30–40% поступлений — высокая нагрузка"
+        pts, txt = -30, "Платежи по текущим кредитам — 30–40% поступлений, нагрузка высокая"
     else:
-        pts, txt = -70, "Платежи по кредитам превысят 40% поступлений — нагрузка слишком высокая"
-    factors.append(Factor("debt_load", "Долговая нагрузка с учётом нового кредита", _pct(dti), pts, txt, txt))
+        pts, txt = -70, "Платежи по текущим кредитам — больше 40% поступлений, нагрузка слишком высокая"
+    factors.append(Factor("debt_load", "Текущая долговая нагрузка", _pct(dti), pts, txt, txt))
 
     # 6. Кредитная история (БКИ)
     overdue12 = int(inp.bki.get("max_overdue_days_12m", 0) or 0)
@@ -215,10 +238,11 @@ def score(inp: ScoringInput) -> ScoringOutcome:
 
     # 7. Кредитная активность: число запросов в БКИ за 30 дней
     inq = int(inp.bki.get("inquiries_30d", 0) or 0)
+    word = plural(inq, "запрос", "запроса", "запросов")
     if inq >= 5:
-        pts, txt = -30, f"{inq} запросов кредитной истории за месяц — компания активно ищет финансирование"
+        pts, txt = -30, f"{inq} {word} кредитной истории за месяц — бизнес активно ищет финансирование"
     elif inq >= 3:
-        pts, txt = -10, f"{inq} запроса кредитной истории за месяц"
+        pts, txt = -10, f"{inq} {word} кредитной истории за месяц"
     else:
         pts, txt = 0, "Обычная кредитная активность"
     factors.append(Factor("credit_inquiries", "Запросы в БКИ за 30 дней", str(inq), pts, txt, ""))
@@ -258,8 +282,10 @@ def score(inp: ScoringInput) -> ScoringOutcome:
         else:
             pts, txt = -35, "По итогам года бизнес убыточен"
         value = f"{margin * 100:.1f}%".replace(".", ",")
+    elif inp.company_kind == "LEGAL":
+        pts, txt, value = 0, "Нет данных об отчётности — оценка по оборотам", "—"
     else:
-        pts, txt, value = 0, "Нет публичной отчётности (ИП) — оценка по оборотам", "—"
+        pts, txt, value = 0, "ИП не публикует отчётность — оценка по оборотам", "—"
     factors.append(Factor("profitability", "Рентабельность по чистой прибыли", value, pts, txt, txt if pts else ""))
 
     # 11. Признаки риска из реестров
@@ -274,8 +300,7 @@ def score(inp: ScoringInput) -> ScoringOutcome:
     if inp.fns.get("mass_address"):
         pts -= 25
         flags.append("адрес массовой регистрации")
-    director_since = inp.egrul.get("director", {}).get("since")
-    if director_since and months_between(date.fromisoformat(director_since), inp.as_of) < 6:
+    if director_changed_recently(inp.egrul, inp.registration_date, inp.as_of):
         pts -= 15
         flags.append("руководитель сменился менее 6 месяцев назад")
     txt = "Признаки риска: " + ", ".join(flags) if flags else "Негативных признаков в реестрах нет"
@@ -309,6 +334,7 @@ def score(inp: ScoringInput) -> ScoringOutcome:
         "existing_monthly_payments": round(existing, 2),
         "new_monthly_payment": round(inp.new_monthly_payment, 2),
         "dti": round(dti, 4),
+        "dti_with_new": round((existing + inp.new_monthly_payment) / base, 4) if base > 0 else None,
         "bki_score": inp.bki.get("score"),
         "max_overdue_days_12m": overdue12,
         "inquiries_30d": inq,

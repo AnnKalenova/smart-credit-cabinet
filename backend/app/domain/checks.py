@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from app.domain.enums import DOC_TYPES, PURPOSES, ConsentType
 from app.domain.finance import inn_is_valid
 from app.domain.products import pledged, required_documents
+from app.domain.text import fmt_amount, fmt_money, months_range
 
 
 @dataclass
@@ -40,14 +41,12 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
             Check(
                 "amount_range",
                 "MISSING",
-                f"Сумма должна быть от {float(product.min_amount):,.0f} до {float(product.max_amount):,.0f} ₽".replace(
-                    ",", " "
-                ),
+                f"Сумма должна быть от {fmt_amount(product.min_amount)} до {fmt_money(product.max_amount)}",
                 {
                     "code": "amount",
                     "type": "FIELD",
                     "field": "amount",
-                    "label": "Укажите сумму в пределах условий продукта",
+                    "label": f"Укажите сумму от {fmt_amount(product.min_amount)} до {fmt_money(product.max_amount)}",
                 },
             )
         )
@@ -59,12 +58,12 @@ def precheck(app, product, company, documents: list, consents: list) -> list[Che
             Check(
                 "term_range",
                 "MISSING",
-                f"Срок должен быть от {product.min_term} до {product.max_term} мес.",
+                f"Срок по продукту — {months_range(product.min_term, product.max_term)}",
                 {
                     "code": "term",
                     "type": "FIELD",
                     "field": "term_months",
-                    "label": "Укажите срок в пределах условий продукта",
+                    "label": f"Укажите срок: {months_range(product.min_term, product.max_term)}",
                 },
             )
         )

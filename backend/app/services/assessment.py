@@ -7,9 +7,10 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.enums import DocType, Purpose
+from app.domain.enums import AppStatus, DocType, OfferStatus, Purpose
 from app.domain.finance import floor_to, offer_economics
 from app.domain.policy import (
+    CONFIRMED_REVENUE_CAP,
     GRADE_LIMIT_FACTOR,
     STATEMENT_HAIRCUT,
     PolicyInput,
@@ -20,7 +21,17 @@ from app.domain.policy import (
 )
 from app.domain.products import pledged, required_documents
 from app.domain.scoring import Factor, ScoringInput, ScoringOutcome, TurnoverStats, months_between, turnover_stats
-from app.models import AccountTurnover, Application, Company, EnrichmentResult, Product, ScoringResult
+from app.domain.text import fmt_money, months_range
+from app.models import (
+    AccountTurnover,
+    Application,
+    Company,
+    EnrichmentResult,
+    Loan,
+    Offer,
+    Product,
+    ScoringResult,
+)
 
 
 def company_turnover(db: Session, company_id) -> TurnoverStats:
@@ -42,11 +53,35 @@ def revenue_confirmed(app: Application) -> bool:
 
 
 def effective_turnover(stats: TurnoverStats, app: Application) -> float:
-    """Если клиент подтвердил выручку выпиской из другого банка — учитываем её с дисконтом."""
+    """Если клиент подтвердил выручку выпиской из другого банка — учитываем её с дисконтом 20%,
+    но не больше чем вдвое выше поступлений на счёт в нашем банке."""
     base = stats.avg_monthly
     if revenue_confirmed(app) and app.declared_revenue:
-        base = max(base, float(app.declared_revenue) / 12 * STATEMENT_HAIRCUT)
+        confirmed = float(app.declared_revenue) / 12 * STATEMENT_HAIRCUT
+        base = max(base, min(confirmed, base * CONFIRMED_REVENUE_CAP))
     return base
+
+
+def own_obligations(db: Session, company_id, exclude_app_id=None) -> float:
+    """Платежи по кредитам, которые этот банк уже выдал компании или вот-вот выдаст (договор на подписании
+    или в выдаче). В отчёте БКИ их ещё нет, поэтому в долговую нагрузку они добавляются здесь."""
+    total = sum(
+        float(x)
+        for x in db.scalars(select(Loan.monthly_payment).where(Loan.company_id == company_id, Loan.status == "ACTIVE"))
+    )
+    q = (
+        select(Offer.monthly_payment)
+        .join(Application, Offer.application_id == Application.id)
+        .where(
+            Application.company_id == company_id,
+            Application.status.in_([AppStatus.SIGNING, AppStatus.DISBURSEMENT]),
+            Offer.status == OfferStatus.ACCEPTED,
+        )
+    )
+    if exclude_app_id is not None:
+        q = q.where(Application.id != exclude_app_id)
+    total += sum(float(x) for x in db.scalars(q))
+    return round(total, 2)
 
 
 def active_products(db: Session) -> list[Product]:
@@ -54,7 +89,12 @@ def active_products(db: Session) -> list[Product]:
 
 
 def build_scoring_input(
-    app: Application, stats: TurnoverStats, sources: dict[str, dict], key_rate: float, as_of: date
+    app: Application,
+    stats: TurnoverStats,
+    sources: dict[str, dict],
+    key_rate: float,
+    as_of: date,
+    other_payments: float = 0.0,
 ) -> ScoringInput:
     product = ProductParams.from_orm(app.product)
     rate = indicative_rate(product, key_rate)
@@ -74,6 +114,7 @@ def build_scoring_input(
         bki=sources.get("BKI", {}),
         has_collateral=pledged(app.product, app.has_collateral),
         owner_guarantee=app.owner_guarantee,
+        other_monthly_payments=other_payments,
     )
 
 
@@ -113,13 +154,16 @@ def build_policy_input(
         as_of=as_of,
         avg_monthly_turnover=stats.avg_monthly,
         effective_monthly_turnover=effective_turnover(stats, app),
-        existing_monthly_payments=float(sources.get("BKI", {}).get("total_monthly_payment", 0) or 0),
+        existing_monthly_payments=float(sources.get("BKI", {}).get("total_monthly_payment", 0) or 0)
+        + own_obligations(db, company.id, app.id),
         bank_tenure_months=months_between(company.client_since, as_of),
         business_age_months=months_between(company.registration_date, as_of),
         scoring=scoring,
         egrul=sources.get("EGRUL", {}),
         fns=sources.get("FNS", {}),
         bki=sources.get("BKI", {}),
+        documents={d.doc_type for d in app.documents},
+        registration_date=company.registration_date,
     )
 
 
@@ -140,7 +184,8 @@ def preapproved_limit(db: Session, company: Company, key_rate: float, as_of: dat
         return None
     params = ProductParams.from_orm(product)
     rate, _ = price(params, "C", key_rate, False, False, months_between(company.client_since, as_of))
-    limit, _ = max_limit(params, "C", rate, params.max_term, stats.avg_monthly, 0.0)
+    # платежи по кредитам этого банка известны и без БКИ — сразу уменьшают предварительный лимит
+    limit, _ = max_limit(params, "C", rate, params.max_term, stats.avg_monthly, own_obligations(db, company.id))
     limit = floor_to(limit, 50_000)
     if limit < params.min_amount:
         return None
@@ -149,7 +194,8 @@ def preapproved_limit(db: Session, company: Company, key_rate: float, as_of: dat
         "product_name": params.name,
         "amount": limit,
         "max_term": params.max_term,
-        "rate_from": indicative_rate(params, key_rate, "A"),
+        # «ставка от» — лучшая ставка для этого клиента: рейтинг A и скидка за стаж в банке
+        "rate_from": price(params, "A", key_rate, False, False, months_between(company.client_since, as_of))[0],
         "note": "Предварительно, по оборотам на вашем счёте. Окончательные условия — после рассмотрения заявки.",
     }
 
@@ -165,6 +211,7 @@ def match_products(
 ) -> list[dict]:
     stats = company_turnover(db, company.id)
     tenure = months_between(company.client_since, as_of)
+    own = own_obligations(db, company.id)
     results = []
     for p in active_products(db):
         params = ProductParams.from_orm(p)
@@ -174,7 +221,7 @@ def match_products(
         rate_best, _ = price(params, "A", key_rate, params.collateral == "REQUIRED", False, tenure)
         rate_typical, _ = price(params, "B", key_rate, params.collateral == "REQUIRED", False, tenure)
         rate_worst, _ = price(params, "C", key_rate, params.collateral == "REQUIRED", False, tenure)
-        limit, _ = max_limit(params, "B", rate_typical, term, stats.avg_monthly, 0.0)
+        limit, _ = max_limit(params, "B", rate_typical, term, stats.avg_monthly, own)
         limit = min(limit, int(params.max_amount))
         fit_amount = min(max(amount, params.min_amount), params.max_amount)
         monthly, interest = offer_economics(fit_amount, rate_typical, term, params.repayment_type)
@@ -182,19 +229,17 @@ def match_products(
         notes = []
         fit = "full"
         if amount < params.min_amount:
-            notes.append(f"Минимальная сумма продукта — {params.min_amount:,.0f} ₽".replace(",", " "))
+            notes.append(f"Минимальная сумма продукта — {fmt_money(params.min_amount)}")
             fit = "partial"
         if amount > params.max_amount:
-            notes.append(f"Максимальная сумма продукта — {params.max_amount:,.0f} ₽".replace(",", " "))
+            notes.append(f"Максимальная сумма продукта — {fmt_money(params.max_amount)}")
             fit = "partial"
         if term != term_months:
-            notes.append(f"Срок по продукту: {params.min_term}–{params.max_term} мес.")
+            notes.append(f"Срок по продукту: {months_range(params.min_term, params.max_term)}")
             fit = "partial"
         if limit and fit_amount > limit:
             notes.append(
-                f"По оборотам на счёте предварительно доступно до {limit:,.0f} ₽ — итог зависит от проверки".replace(
-                    ",", " "
-                )
+                f"По оборотам на счёте предварительно доступно до {fmt_money(limit)} — итог зависит от проверки"
             )
             fit = "partial"
         docs = required_documents(p, fit_amount, purpose, company.kind)

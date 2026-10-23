@@ -13,6 +13,8 @@ from app.domain.policy import (
     indicative_rate,
     max_limit,
     price,
+    rate_bounds,
+    round_rate,
 )
 from app.domain.products import PRODUCTS_SEED
 from app.domain.scoring import GRADE_PD, Factor, ScoringOutcome
@@ -330,3 +332,45 @@ def test_collateral_counts_only_where_product_allows_it():
     offer = express.offers[0]
     assert not any("Залог" in c for c in offer.conditions)
     assert all(p["label"] != "Скидка за залог" for p in offer.pricing["parts"])
+
+
+def test_alternative_product_is_offered_only_if_nothing_extra_is_needed():
+    # экспресс-кредит на оборудование при низких оборотах: инвестиционный кредит требует залога и счёта
+    # поставщика, которых в заявке нет, — его нельзя предлагать автоматически
+    result = evaluate(
+        _input(product="EXPRESS", purpose="EQUIPMENT", amount=1_000_000, term_months=24, turnover=180_000)
+    )
+    assert all(o.product_code != "INVESTMENT" for o in result.offers)
+
+
+def test_rate_rounds_half_up_and_breakdown_adds_up_with_fractional_key_rate():
+    rate, parts = price(PRODUCTS["EXPRESS"], "B", 16.25, False, False, 0)
+    assert rate == 24.3  # 16,25 + 7 + 1 = 24,25 → 24,3
+    assert sum(p["value"] for p in parts) == pytest.approx(rate)
+    assert any(p["label"] == "Округление до 0,1 п.п." for p in parts)
+    assert rate_bounds(PRODUCTS["EXPRESS"], 16.25) == (17.3, 29.2)  # коридор округлён внутрь
+    assert round_rate(20.65) == 20.7 and round_rate(20.64) == 20.6
+
+
+def test_confirmed_revenue_counts_at_most_twice_the_account_turnover():
+    from types import SimpleNamespace
+
+    from app.domain.scoring import TurnoverStats
+    from app.services.assessment import effective_turnover
+
+    stats = TurnoverStats(months=12, avg_monthly=650_000, cv=0.1, trend=0.0, series=[])
+    statement = [SimpleNamespace(doc_type="BANK_STATEMENT")]
+    modest = SimpleNamespace(documents=statement, declared_revenue=14_400_000)
+    inflated = SimpleNamespace(documents=statement, declared_revenue=144_000_000)
+    assert effective_turnover(stats, modest) == pytest.approx(14_400_000 / 12 * 0.8)
+    assert effective_turnover(stats, inflated) == pytest.approx(650_000 * 2)
+
+
+def test_statement_far_above_turnover_goes_to_specialist():
+    inflated = evaluate(
+        _input(declared_revenue=4_600_000 * 12 * 5, revenue_confirmed=True, effective_monthly_turnover=9_200_000)
+    )
+    assert inflated.outcome == DecisionOutcome.MANUAL_REVIEW
+    assert "revenue_unverified" in _codes(inflated)
+    modest = evaluate(_input(declared_revenue=4_600_000 * 12 * 1.5, revenue_confirmed=True))
+    assert "revenue_unverified" not in _codes(modest)
