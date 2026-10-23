@@ -90,7 +90,7 @@ jobs:
         run: |
           pip install httpx==0.28.1
           python e2e/api_scenarios.py --base-url http://localhost:8080
-           - name: Чистый стенд для Postman-коллекции
+      - name: Чистый стенд для Postman-коллекции
         # сквозные сценарии выдали кредиты демо-компаниям, а коллекция рассчитана на исходные данные
         run: |
           docker compose down -v
