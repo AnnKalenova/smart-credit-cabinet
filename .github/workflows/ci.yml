@@ -90,6 +90,11 @@ jobs:
         run: |
           pip install httpx==0.28.1
           python e2e/api_scenarios.py --base-url http://localhost:8080
+           - name: Чистый стенд для Postman-коллекции
+        # сквозные сценарии выдали кредиты демо-компаниям, а коллекция рассчитана на исходные данные
+        run: |
+          docker compose down -v
+          docker compose up -d --wait --wait-timeout 300
       - name: Postman-коллекция (newman)
         run: npx --yes newman@6.2.3 run docs/postman/smart-credit-cabinet.postman_collection.json --env-var baseUrl=http://localhost:8080
       - name: Проверка веб-интерфейса и Swagger
