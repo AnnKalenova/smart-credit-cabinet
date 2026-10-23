@@ -20,6 +20,9 @@ const OPERATION_LABEL: Record<string, string> = {
   open_loan_and_disburse: "Открытие ссудного счёта и выдача",
 };
 const CALL_STATUS_LABEL: Record<string, string> = { SUCCESS: "Успешно", ERROR: "Ошибка", TIMEOUT: "Нет ответа" };
+// причины, после которых имеет смысл повторить автоматическую проверку: внешний источник был недоступен
+// или прислал неполный ответ, либо этап конвейера не выполнился из-за технического сбоя
+const RERUN_REASONS = ["integration_unavailable", "technical_failure"];
 
 // ------------------------------------------------------------------ решение аналитика
 
@@ -728,7 +731,7 @@ export function BankApplicationPage() {
               <RotateCcw size={17} /> Повторить выдачу
             </button>
           )}
-          {app.permissions.can_rerun && app.decisions[0]?.reasons.some((r) => r.code === "integration_unavailable") && (
+          {app.permissions.can_rerun && app.decisions[0]?.reasons.some((r) => RERUN_REASONS.includes(r.code)) && (
             <button className="btn btn-ghost" onClick={() => act("rerun", "Автоматическая проверка запущена повторно")}>
               <RotateCcw size={17} /> Повторить проверку
             </button>

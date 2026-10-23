@@ -100,6 +100,9 @@ class Simulator:
         if last is not None and last.kind == DecisionKind.MANUAL and last.outcome == DecisionOutcome.DECLINE:
             # решение специалиста не пересчитывается автоматически — вопросы можно задать ему в переписке
             raise SimulationError("По заявке решение принял кредитный специалист — условия подбирает он", True)
+        if last is not None and any(r.get("code") == "technical_failure" for r in last.reasons or []):
+            # автоматическая оценка не завершилась из-за сбоя — тот же расчёт в конструкторе не поможет
+            raise SimulationError("Заявку проверяет специалист: автоматическая оценка не завершилась", True)
         self.sources = assessment.enrichment(db, app.id)
         if not all(self.sources.get(s) for s in REQUIRED_SOURCES):
             raise SimulationError("Конструктор условий доступен после того, как банк оценит заявку", True)

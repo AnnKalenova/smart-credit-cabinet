@@ -26,7 +26,7 @@ from app.domain.enums import JobStatus
 from app.integrations.client import SERVICE_TITLES, IntegrationError
 from app.logging_setup import setup_logging
 from app.models import Application, PipelineJob
-from app.services.pipeline import FAILURE_HANDLERS, HANDLERS, expire_offers
+from app.services.pipeline import FAILURE_HANDLERS, HANDLERS, expire_offers, recover_stuck_applications
 from app.services.workflow import utcnow
 
 settings = get_settings()
@@ -132,11 +132,8 @@ def _on_error(db: Session, job_id: int, error: Exception) -> None:
     log.error(
         "этап не выполнен", extra={"job_id": job.id, "stage": job.stage, "application": app.number, "error": str(error)}
     )
-    handler = FAILURE_HANDLERS.get(job.stage)
-    if handler:
-        handler(db, app, error)
-    else:
-        app.stage_detail = "Произошла техническая ошибка — специалист банка уже разбирается"
+    # проверка полноты, сбор сведений, скоринг и решение передают заявку специалисту, выдача ждёт его повтора
+    FAILURE_HANDLERS[job.stage](db, app, error)
     db.commit()
 
 
@@ -171,6 +168,9 @@ def housekeeping() -> None:
         db.commit()
         if expired:
             log.info("истекли предложения", extra={"count": expired})
+        recovered = recover_stuck_applications(db)
+        if recovered:
+            log.warning("заявки после сбоя этапа переданы специалисту", extra={"count": recovered})
 
 
 def run() -> None:

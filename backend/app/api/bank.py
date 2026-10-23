@@ -48,6 +48,7 @@ from app.services.views import (
     bank_rows,
     dashboard,
     disbursement_failed,
+    latest_decision,
     latest_scoring,
     message_out,
 )
@@ -232,6 +233,21 @@ def rerun(app_id: uuid.UUID, db: Session = Depends(get_db), user: User = Depends
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Повтор доступен на ручном рассмотрении и при сбое выдачи кредита"
         )
+    last = latest_decision(db, app.id)
+    if last and (last.details or {}).get("stage") == JobStage.PRECHECK:
+        # проверка полноты не завершилась из-за сбоя — начинаем с неё, а не со сбора сведений
+        transition(
+            db,
+            app,
+            AppStatus.PRECHECK,
+            actor_type=ActorType.ANALYST,
+            actor_id=user.id,
+            title="Специалист запустил повторную автоматическую проверку",
+            stage_detail="Повторно проверяем полноту данных",
+        )
+        enqueue(db, app, JobStage.PRECHECK, delay_seconds=0.5)
+        _commit(db)
+        return {"ok": True}
     transition(
         db,
         app,

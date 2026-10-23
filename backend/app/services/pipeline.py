@@ -10,8 +10,9 @@ import logging
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.config import get_settings
 from app.domain import checks as checks_mod
@@ -23,13 +24,14 @@ from app.domain.enums import (
     DecisionOutcome,
     InfoRequestStatus,
     JobStage,
+    JobStatus,
     OfferStatus,
 )
 from app.domain.finance import add_months, build_annuity_schedule, build_revolving_schedule, money
 from app.domain.policy import POLICY_VERSION, OfferDraft, PolicyResult, evaluate
 from app.domain.scoring import MODEL_VERSION, score
 from app.domain.text import fmt_money, lower_first
-from app.integrations.client import SERVICE_FROM, SERVICE_TITLES, ExternalSystems
+from app.integrations.client import SERVICE_FROM, SERVICE_TITLES, ExternalSystems, IntegrationError
 from app.models import (
     Application,
     CheckResult,
@@ -181,6 +183,10 @@ def stage_enrichment(db: Session, app: Application, job: PipelineJob) -> None:
 
 def on_enrichment_failed(db: Session, app: Application, error: Exception) -> None:
     if app.status != AppStatus.ENRICHMENT:
+        return
+    if not isinstance(error, IntegrationError):
+        # источники ответили, а упал расчёт (например, оборотов по счёту) — это технический сбой этапа
+        on_stage_failed(db, app, error, JobStage.ENRICHMENT)
         return
     service = getattr(error, "service", "")
     source = SERVICE_FROM.get(service, "из внешнего источника")
@@ -436,10 +442,99 @@ def on_disbursement_failed(db: Session, app: Application, error: Exception) -> N
     )
 
 
+STAGE_TITLES = {
+    JobStage.PRECHECK: "Проверка полноты",
+    JobStage.ENRICHMENT: "Сбор сведений",
+    JobStage.SCORING: "Скоринг",
+    JobStage.DECISION: "Расчёт решения",
+}
+
+
+def on_stage_failed(db: Session, app: Application, error: Exception, stage: str) -> None:
+    """Проверка полноты, скоринг или расчёт решения не выполнились после всех попыток (например, из-за
+    ошибки в данных). Заявка не остаётся на этапе: она уходит в очередь специалиста с причиной «технический
+    сбой». Специалист повторяет проверку, когда ошибку устранят, или принимает решение сам."""
+    if app.status != stage:
+        return
+    decision = Decision(
+        application_id=app.id,
+        kind=DecisionKind.AUTO,
+        outcome=DecisionOutcome.MANUAL_REVIEW,
+        reasons=[
+            {
+                "code": "technical_failure",
+                "kind": "MANUAL",
+                "text": f"Этап «{STAGE_TITLES[stage]}» не выполнен после всех попыток: {str(error)[:300]}. "
+                "Повторите проверку, когда ошибку устранят, или примите решение вручную",
+                "client_text": "Автоматическая проверка не завершилась — заявку рассмотрит специалист",
+            }
+        ],
+        details={"error": str(error)[:500], "stage": stage},
+        policy_version=POLICY_VERSION,
+    )
+    db.add(decision)
+    app.review_due_at = utcnow() + timedelta(hours=settings.manual_review_sla_hours)
+    transition(
+        db,
+        app,
+        AppStatus.MANUAL_REVIEW,
+        title="Передали заявку специалисту: автоматическая проверка не завершилась",
+        payload={"stage": stage},
+    )
+
+
+def _stage_failed(stage: str):
+    return lambda db, app, error: on_stage_failed(db, app, error, stage)
+
+
+# у каждого этапа есть обработчик: после исчерпания попыток заявка не может «зависнуть» на этапе
 FAILURE_HANDLERS = {
+    JobStage.PRECHECK: _stage_failed(JobStage.PRECHECK),
     JobStage.ENRICHMENT: on_enrichment_failed,
+    JobStage.SCORING: _stage_failed(JobStage.SCORING),
+    JobStage.DECISION: _stage_failed(JobStage.DECISION),
     JobStage.DISBURSEMENT: on_disbursement_failed,
 }
+
+
+AUTOMATIC_STAGES = (JobStage.PRECHECK, JobStage.ENRICHMENT, JobStage.SCORING, JobStage.DECISION)
+
+
+def stuck_applications(db: Session) -> list[tuple[Application, PipelineJob]]:
+    """Заявки на автоматическом этапе, последняя задача которого упала и больше не повторяется. Так бывает,
+    если сбой случился до того, как у этапа появился обработчик, или сам обработчик не сработал."""
+    last_job = (
+        select(PipelineJob.application_id, func.max(PipelineJob.id).label("job_id"))
+        .group_by(PipelineJob.application_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(Application, PipelineJob)
+        .join(last_job, last_job.c.application_id == Application.id)
+        .join(PipelineJob, PipelineJob.id == last_job.c.job_id)
+        .where(
+            Application.status.in_(AUTOMATIC_STAGES),
+            PipelineJob.status == JobStatus.FAILED,
+            PipelineJob.stage == Application.status,
+        )
+    ).all()
+    return [(app, job) for app, job in rows]
+
+
+def recover_stuck_applications(db: Session) -> int:
+    """Передаёт специалисту заявки, которые иначе так и остались бы на этапе (см. stuck_applications)."""
+    recovered = 0
+    for app, job in stuck_applications(db):
+        try:
+            FAILURE_HANDLERS[JobStage(job.stage)](db, app, RuntimeError(job.last_error or "этап не выполнен"))
+            db.commit()
+            recovered += 1
+        except StaleDataError:
+            db.rollback()  # заявку в это же время изменили (или её взял другой воркер) — посмотрим в следующий раз
+        except Exception:  # noqa: BLE001 — одна заявка не должна мешать остальным
+            db.rollback()
+            log.exception("не удалось передать специалисту заявку после сбоя этапа", extra={"application": app.number})
+    return recovered
 
 
 def expire_offers(db: Session) -> int:

@@ -56,7 +56,10 @@ def test_terminal_statuses_have_no_exits():
         ("PRECHECK", "NEEDS_INFO"),
         ("NEEDS_INFO", "PRECHECK"),
         ("DECISION", "MANUAL_REVIEW"),
+        ("PRECHECK", "MANUAL_REVIEW"),
+        ("SCORING", "MANUAL_REVIEW"),
         ("MANUAL_REVIEW", "ENRICHMENT"),
+        ("MANUAL_REVIEW", "PRECHECK"),
         ("OFFER_READY", "SIGNING"),
         ("SIGNING", "OFFER_READY"),
         ("SIGNING", "EXPIRED"),
@@ -81,6 +84,14 @@ def test_allowed_transitions(src, dst):
 def test_forbidden_transitions(src, dst):
     with pytest.raises(TransitionError):
         assert_transition(src, dst)
+
+
+def test_every_pipeline_stage_has_a_failure_handler():
+    # после исчерпания попыток заявка уходит специалисту или ждёт его повтора, а не остаётся на этапе
+    from app.domain.enums import JobStage
+    from app.services.pipeline import FAILURE_HANDLERS, HANDLERS
+
+    assert set(HANDLERS) == set(FAILURE_HANDLERS) == set(JobStage)
 
 
 def test_client_view_tones_and_steps():
