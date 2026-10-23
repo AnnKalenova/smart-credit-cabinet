@@ -25,12 +25,20 @@ SOURCES = {
     "data-model": DOCS / "data-model.md",
 }
 
+# Палитра интерфейса: текст и стрелки — ink #212124, фон страницы #F2F3F5, белые карточки с рамкой #D5D6DC,
+# акцент #EF3124 (текст на белом — #D72505), зелёный #0B7A2E — в classDef диаграммы состояний
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<style>body{margin:0;background:#fff;font-family:system-ui,sans-serif} #d{padding:24px;display:inline-block}</style>
+<style>body{margin:0;background:#F2F3F5;font-family:system-ui,sans-serif} #d{padding:24px;display:inline-block}</style>
 </head><body><div id="d"></div><script>__MERMAID_JS__</script><script>
 mermaid.initialize({startOnLoad:false, theme:"base", themeVariables:{
-  primaryColor:"#ffffff", primaryBorderColor:"#141c2b", primaryTextColor:"#141c2b",
-  lineColor:"#4a5468", secondaryColor:"#fff4cf", tertiaryColor:"#f3f5f8", fontSize:"15px"
+  background:"#F2F3F5", fontSize:"15px",
+  primaryColor:"#FFFFFF", primaryTextColor:"#212124", primaryBorderColor:"#D5D6DC",
+  secondaryColor:"#FFFFFF", tertiaryColor:"#FFFFFF",
+  lineColor:"#212124", textColor:"#212124",
+  edgeLabelBackground:"#F2F3F5", labelBackgroundColor:"#F2F3F5",
+  clusterBkg:"#FFFFFF", clusterBorder:"#D5D6DC", titleColor:"#D72505",
+  noteBkgColor:"#FFFFFF", noteBorderColor:"#EF3124", noteTextColor:"#212124",
+  attributeBackgroundColorOdd:"#FFFFFF", attributeBackgroundColorEven:"#F2F3F5"
 }, flowchart:{curve:"basis"}});
 window.render = async (code) => {
   const { svg } = await mermaid.render("g", code);

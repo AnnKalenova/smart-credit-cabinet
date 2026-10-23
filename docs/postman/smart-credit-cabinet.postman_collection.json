@@ -23,6 +23,10 @@
       "value": ""
     },
     {
+      "key": "employeeToken",
+      "value": ""
+    },
+    {
       "key": "companyId",
       "value": ""
     },
@@ -56,6 +60,30 @@
     },
     {
       "key": "recTerm",
+      "value": ""
+    },
+    {
+      "key": "bankOfferId",
+      "value": ""
+    },
+    {
+      "key": "bankOfferTerm",
+      "value": ""
+    },
+    {
+      "key": "simProduct",
+      "value": ""
+    },
+    {
+      "key": "simAmount",
+      "value": ""
+    },
+    {
+      "key": "simTerm",
+      "value": ""
+    },
+    {
+      "key": "parentId",
       "value": ""
     }
   ],
@@ -962,7 +990,7 @@
     },
     {
       "name": "2. Встречное предложение и конструктор условий — ИП Кузнецова",
-      "description": "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму. Конструктор показывает, что на 18 мес. банк одобрит автоматически, — новая заявка на этих условиях одобряется.",
+      "description": "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму. Конструктор узнаёт условия из предложения банка и подсказывает другие, при которых банк одобрит автоматически. Отказ от предложения и новая заявка на условиях подсказки — один вызов; новая заявка одобряется автоматически.",
       "item": [
         {
           "name": "Вход: Кузнецова",
@@ -1320,7 +1348,10 @@
                   "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
                   "const app = pm.response.json();",
                   "pm.test('Встречное предложение', () => pm.expect(app.decision.outcome).to.eql('COUNTER_OFFER'));",
-                  "pm.test('Два варианта', () => pm.expect(app.offers.length).to.eql(2));"
+                  "pm.test('Два варианта', () => pm.expect(app.offers.length).to.eql(2));",
+                  "const full = app.offers.find(o => o.amount === app.amount);",
+                  "pm.test('Есть вариант на всю сумму', () => pm.expect(full).to.be.an('object'));",
+                  "if (full) { pm.collectionVariables.set('bankOfferId', full.id); pm.collectionVariables.set('bankOfferTerm', full.term_months); }"
                 ]
               }
             }
@@ -1366,7 +1397,10 @@
                   "const s = pm.response.json();",
                   "pm.test('Тот же исход, что у заявки', () => pm.expect(s.result.outcome).to.eql('COUNTER_OFFER'));",
                   "pm.test('Нагрузка выше 40%', () => pm.expect(s.result.payment_share).to.be.above(s.result.payment_share_cap));",
-                  "pm.test('Есть подсказки', () => pm.expect(s.suggestions.length).to.be.above(0));"
+                  "const best = s.suggestions.find(x => x.result.outcome === 'APPROVE');",
+                  "pm.test('Есть подсказка с автоматическим одобрением', () => pm.expect(best).to.be.an('object'));",
+                  "pm.test('Подсказки не повторяют предложение банка', () => s.suggestions.forEach(x => pm.expect(x.result.offer).to.eql(null)));",
+                  "if (best) { pm.collectionVariables.set('simProduct', best.params.product_code); pm.collectionVariables.set('simAmount', best.params.amount); pm.collectionVariables.set('simTerm', best.params.term_months); }"
                 ]
               }
             }
@@ -1411,7 +1445,7 @@
           "id": "68bba6e6-1ca7-5264-a97f-12c31e6a532d"
         },
         {
-          "name": "Конструктор условий: срок 18 мес.",
+          "name": "Конструктор условий: условия из предложения банка",
           "event": [
             {
               "listen": "test",
@@ -1420,7 +1454,8 @@
                 "exec": [
                   "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
                   "const s = pm.response.json();",
-                  "pm.test('Одобрим автоматически', () => pm.expect(s.result.outcome).to.eql('APPROVE'));"
+                  "pm.test('Одобрим автоматически', () => pm.expect(s.result.outcome).to.eql('APPROVE'));",
+                  "pm.test('Узнаёт вариант из предложения', () => pm.expect(s.result.offer.id).to.eql(pm.collectionVariables.get('bankOfferId')));"
                 ]
               }
             }
@@ -1446,10 +1481,10 @@
                 "simulation"
               ]
             },
-            "description": "",
+            "description": "Условия совпадают с вариантом банка: его выбирают в предложении, новая заявка не нужна.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"term_months\": 18,\n  \"with_suggestions\": false\n}"
+              "raw": "{\n  \"amount\": 1000000,\n  \"term_months\": \"{{bankOfferTerm}}\",\n  \"with_suggestions\": false\n}"
             },
             "auth": {
               "type": "bearer",
@@ -1462,54 +1497,10 @@
               ]
             }
           },
-          "id": "432160bd-940f-5582-a394-c82481061f9c"
+          "id": "70cd87ba-b4c5-50ab-b3c6-70a9df98aaaa"
         },
         {
-          "name": "Отказаться от предложения",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/offers/decline",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "applications",
-                "{{appId}}",
-                "offers",
-                "decline"
-              ]
-            },
-            "description": "",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{clientToken}}",
-                  "type": "string"
-                }
-              ]
-            }
-          },
-          "id": "e85d63c5-ca95-59c2-972b-0364d90dc338"
-        },
-        {
-          "name": "Новая заявка на выбранных условиях",
+          "name": "Новая заявка на условиях подсказки вместо предложения",
           "event": [
             {
               "listen": "test",
@@ -1518,8 +1509,9 @@
                 "exec": [
                   "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
                   "const n = pm.response.json();",
-                  "pm.test('Черновик на 18 мес.', () => { pm.expect(n.status).to.eql('DRAFT'); pm.expect(n.term_months).to.eql(18); });",
+                  "pm.test('Черновик на условиях подсказки', () => { pm.expect(n.status).to.eql('DRAFT'); pm.expect(n.term_months).to.eql(Number(pm.collectionVariables.get('simTerm'))); });",
                   "pm.test('Связан с исходной заявкой', () => pm.expect(n.parent_id).to.eql(pm.collectionVariables.get('appId')));",
+                  "pm.collectionVariables.set('parentId', pm.collectionVariables.get('appId'));",
                   "pm.collectionVariables.set('appId', n.id);"
                 ]
               }
@@ -1546,10 +1538,10 @@
                 "reapply"
               ]
             },
-            "description": "",
+            "description": "replace_current: отказ от действующего предложения и новая заявка — одной транзакцией.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"term_months\": 18\n}"
+              "raw": "{\n  \"product_code\": \"{{simProduct}}\",\n  \"amount\": \"{{simAmount}}\",\n  \"term_months\": \"{{simTerm}}\",\n  \"replace_current\": true\n}"
             },
             "auth": {
               "type": "bearer",
@@ -1562,7 +1554,52 @@
               ]
             }
           },
-          "id": "fed33629-a11c-5cef-8a02-877a68e62bc4"
+          "id": "378d23b7-beb7-52a6-a3c0-441e37002c1c"
+        },
+        {
+          "name": "Исходная заявка закрыта отказом от предложения",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const old = pm.response.json();",
+                  "pm.test('Отказ клиента', () => pm.expect(old.status).to.eql('CLIENT_DECLINED'));",
+                  "pm.test('Ссылка на новую заявку', () => pm.expect(old.next_application.id).to.eql(pm.collectionVariables.get('appId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{parentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{parentId}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "f05e7fb0-af2d-520a-816e-bf66fb460d3c"
         },
         {
           "name": "Получить код подписи согласий",
@@ -3522,7 +3559,598 @@
       ]
     },
     {
-      "name": "6. Банк: мониторинг, параметры, сбои",
+      "name": "6. Передача условий руководителю — ООО «Северный хлеб»",
+      "description": "Главный бухгалтер без права подписи подбирает условия в конструкторе и передаёт их руководителю: руководитель получает уведомление, а в заявке видит переданные условия.",
+      "item": [
+        {
+          "name": "Вход: Смирнов (директор)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('clientToken', r.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"login\": \"smirnov\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "id": "d4317417-6483-5d17-9c3f-3c2af64f13b5"
+        },
+        {
+          "name": "Компании пользователя (Смирнов (директор))",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('companyId', pm.response.json().companies[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "00ddd098-4539-5857-ac5b-d50a8b75767b"
+        },
+        {
+          "name": "Создать черновик",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('appId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_id\": \"{{companyId}}\",\n  \"product_code\": \"EXPRESS\",\n  \"purpose\": \"OTHER\",\n  \"amount\": 500000,\n  \"term_months\": 6\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "536ab972-eea2-5de0-97a2-4d69739d2720"
+        },
+        {
+          "name": "Получить код подписи согласий",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('challengeId', r.challenge_id);",
+                  "pm.collectionVariables.set('code', r.demo_code);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/sign-challenges",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "sign-challenges"
+              ]
+            },
+            "description": "На демо-стенде код подтверждения возвращается в ответе (поле demo_code).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purpose\": \"CONSENTS\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "43717da8-b5a2-5d35-bf4b-c067c5a03bf2"
+        },
+        {
+          "name": "Подписать согласия",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Два согласия', () => pm.expect(pm.response.json().consents.length).to.eql(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/consents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "consents"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"challenge_id\": \"{{challengeId}}\",\n  \"code\": \"{{code}}\"\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "467043d1-fd87-5d5b-baf5-a9bc7712d7c9"
+        },
+        {
+          "name": "Отправить заявку",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/submit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "submit"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "3d53cbfc-5f6b-5ce0-b032-5568d2e4d510"
+        },
+        {
+          "name": "Дождаться решения",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const app = pm.response.json();",
+                  "const processing = [\"SUBMITTED\", \"PRECHECK\", \"ENRICHMENT\", \"SCORING\", \"DECISION\", \"DISBURSEMENT\"];",
+                  "const tries = Number(pm.collectionVariables.get('pollTries') || 0);",
+                  "if (processing.includes(app.status) && tries < 60) {",
+                  "  pm.collectionVariables.set('pollTries', tries + 1);",
+                  "  setTimeout(() => {}, 1500);",
+                  "  pm.execution.setNextRequest(pm.info.requestId);",
+                  "  return;",
+                  "}",
+                  "pm.collectionVariables.set('pollTries', 0);",
+                  "pm.test('Статус OFFER_READY', () => pm.expect(app.status).to.eql('OFFER_READY'));",
+                  "if (app.offers && app.offers.length) pm.collectionVariables.set('offerId', app.offers[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}"
+              ]
+            },
+            "description": "Опрашивает заявку каждые 1,5 с, пока она в обработке. Ожидаемый итог: OFFER_READY.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "d2f53f3b-acf9-5e61-81f9-36ecc13ab806"
+        },
+        {
+          "name": "Вход: Орлова (главный бухгалтер)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('employeeToken', r.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"login\": \"orlova\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "id": "3c56476b-8ce1-5e96-896e-c46cf56bb11c"
+        },
+        {
+          "name": "Бухгалтер не заменяет заявку сам",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/reapply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "reapply"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 400000,\n  \"term_months\": 12,\n  \"owner_guarantee\": true,\n  \"replace_current\": true\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{employeeToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "c314e5c1-43f1-5575-9505-a953aeb3a5a8"
+        },
+        {
+          "name": "Передать условия руководителю",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test('Условия сохранены в заявке', () => pm.expect(r.proposed_conditions.conditions.amount).to.eql(400000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}/request-signature",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}",
+                "request-signature"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conditions\": {\n    \"amount\": 400000,\n    \"term_months\": 12,\n    \"owner_guarantee\": true\n  }\n}"
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{employeeToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "27b4f522-d5d5-58c0-9284-a48348a71b9e"
+        },
+        {
+          "name": "Руководитель видит переданные условия",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const pc = pm.response.json().proposed_conditions;",
+                  "pm.test('Условия от бухгалтера', () => { pm.expect(pc.conditions.amount).to.eql(400000); pm.expect(pc.conditions.term_months).to.eql(12); pm.expect(pc.conditions.owner_guarantee).to.eql(true); });",
+                  "pm.test('Кто предложил', () => pm.expect(pc.by).to.eql('Орлова Мария Петровна'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/applications/{{appId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "applications",
+                "{{appId}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "813d5106-2176-582b-837b-a342807311d5"
+        },
+        {
+          "name": "Уведомление руководителю",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().items;",
+                  "pm.test('Новые условия по заявке', () => pm.expect(items[0].title).to.include('Новые условия по заявке'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "id": "f85c1700-5cc2-57de-9aeb-cd934e086dce"
+        }
+      ]
+    },
+    {
+      "name": "7. Банк: мониторинг, параметры, сбои",
       "description": "Дашборд конвейера, изменение ключевой ставки риск-менеджером, моделирование сбоя БКИ.",
       "item": [
         {
@@ -3569,7 +4197,7 @@
               "type": "noauth"
             }
           },
-          "id": "935d3b3f-f68a-56ef-ac21-7c7c69725f28"
+          "id": "ef471a7b-6d58-515e-8dc6-23901e0c86d3"
         },
         {
           "name": "Дашборд",
@@ -3611,7 +4239,7 @@
               ]
             }
           },
-          "id": "9e69a472-1b8e-57a1-9bee-1a4177bab039"
+          "id": "f6e2410b-9fb1-582e-84db-53f3aeda6078"
         },
         {
           "name": "Параметры политики",
@@ -3653,7 +4281,7 @@
               ]
             }
           },
-          "id": "8b2fc635-0c25-55ff-8e78-a4ba5271dd29"
+          "id": "f8ff9bf7-629b-5b1f-a6b0-1d1f0477309f"
         },
         {
           "name": "Изменить ключевую ставку",
@@ -3705,7 +4333,7 @@
               ]
             }
           },
-          "id": "6edf96ec-670d-5258-9c6a-3b4ce97b1d33"
+          "id": "e7c92518-6301-5cfd-815e-45685cad60e2"
         },
         {
           "name": "Отключить БКИ на 30 с",
@@ -3757,7 +4385,7 @@
               ]
             }
           },
-          "id": "c3a53d07-8640-58db-aa36-8f996f171a8a"
+          "id": "d909a07e-bdc1-5cba-89f7-399c7fbb79d5"
         },
         {
           "name": "Вернуть БКИ",
@@ -3809,7 +4437,7 @@
               ]
             }
           },
-          "id": "dbe93c22-e2a6-5acd-a717-a24977ffdd4f"
+          "id": "7d3c5062-dc24-5595-bcea-804004f19f91"
         }
       ]
     }

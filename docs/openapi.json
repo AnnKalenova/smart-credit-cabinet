@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Умный кредитный кабинет предпринимателя — API",
-    "description": "\nЦифровой кредитный конвейер для малого и микробизнеса.\n\n**Клиентский путь:** подбор продукта → черновик заявки с предзаполненными данными → согласия\n(простая ЭП кодом внутри продукта) → отправка → уточнения → предложение → подписание → выдача.\n\n**Банковская обработка:** проверка полноты → сбор данных (ЕГРЮЛ/ЕГРИП, ФНС, БКИ — симуляторы) →\nскоринг (балльная модель) → кредитная политика → автоматическое решение или ручное рассмотрение.\n\n**Конструктор условий:** `POST /api/v1/applications/{id}/simulation` — клиент меняет сумму, срок, продукт,\nзалог и поручительство и сразу видит решение банка, ставку и платёж, а при отказе — что изменить.\n\nАвторизация: `POST /api/v1/auth/login` → кнопка **Authorize** → `Bearer <access_token>`.\nДемо-учётки: `GET /api/v1/auth/demo-accounts`, пароль у всех `demo1234`.\n",
+    "description": "\nЦифровой кредитный конвейер для малого и микробизнеса.\n\n**Клиентский путь:** подбор продукта → черновик заявки с предзаполненными данными → согласия\n(простая ЭП кодом внутри продукта) → отправка → уточнения → предложение → подписание → выдача.\n\n**Банковская обработка:** проверка полноты → сбор данных (ЕГРЮЛ/ЕГРИП, ФНС, БКИ — через сервис интеграций) →\nскоринг (балльная модель) → кредитная политика → автоматическое решение или ручное рассмотрение.\n\n**Конструктор условий:** `POST /api/v1/applications/{id}/simulation` — клиент меняет сумму, срок, продукт,\nзалог и поручительство и сразу видит решение банка, ставку и платёж, а при отказе — что изменить.\n\nАвторизация: `POST /api/v1/auth/login` → кнопка **Authorize** → `Bearer <access_token>`.\nДемо-учётки: `GET /api/v1/auth/demo-accounts`, пароль у всех `demo1234`.\n",
     "version": "1.1.0"
   },
   "paths": {
@@ -998,6 +998,7 @@
           "Клиент: заявка"
         ],
         "summary": "Передать заявку руководителю на подпись",
+        "description": "Сотрудник без права подписи передаёт заявку руководителю. С условиями из конструктора — предлагает\nподать новую заявку на них: руководитель откроет заявку, и конструктор покажет эти условия.",
         "operationId": "request_signature_api_v1_applications__app_id__request_signature_post",
         "security": [
           {
@@ -1016,6 +1017,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignatureRequestIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1459,7 +1477,7 @@
         "tags": [
           "Клиент: заявка"
         ],
-        "summary": "Подать новую заявку на основе закрытой",
+        "summary": "Подать новую заявку на основе этой (закрытой — или закрыть её и подать одним действием)",
         "operationId": "reapply_api_v1_applications__app_id__reapply_post",
         "security": [
           {
@@ -1484,7 +1502,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/ConditionsIn"
+                    "$ref": "#/components/schemas/ReapplyIn"
                   },
                   {
                     "type": "null"
@@ -2372,18 +2390,6 @@
               }
             ],
             "title": "Purpose Details"
-          },
-          "parent_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Id"
           }
         },
         "type": "object",
@@ -2654,6 +2660,19 @@
             ],
             "title": "Next Application",
             "description": "Новая заявка, поданная на основе этой: номер и статус"
+          },
+          "proposed_conditions": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed Conditions",
+            "description": "Условия из конструктора, которые сотрудник без права подписи передал руководителю"
           }
         },
         "type": "object",
@@ -3069,6 +3088,12 @@
             },
             "type": "array",
             "title": "Triggers"
+          },
+          "awaiting_reply": {
+            "type": "boolean",
+            "title": "Awaiting Reply",
+            "description": "Последнее сообщение по заявке — от клиента, он ждёт ответа",
+            "default": false
           }
         },
         "type": "object",
@@ -4110,6 +4135,24 @@
             "maximum": 120.0,
             "exclusiveMinimum": 0.0,
             "title": "Term Months"
+          },
+          "has_collateral": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Collateral",
+            "description": "Залог: не указан — как требует продукт"
+          },
+          "owner_guarantee": {
+            "type": "boolean",
+            "title": "Owner Guarantee",
+            "description": "Поручительство собственника",
+            "default": false
           }
         },
         "type": "object",
@@ -4491,6 +4534,79 @@
         ],
         "title": "ProductOut"
       },
+      "ReapplyIn": {
+        "properties": {
+          "product_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Code"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 10000000000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "term_months": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 120.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Term Months"
+          },
+          "has_collateral": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Collateral"
+          },
+          "owner_guarantee": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Guarantee"
+          },
+          "replace_current": {
+            "type": "boolean",
+            "title": "Replace Current",
+            "description": "Для заявки с предложением или на ручном рассмотрении: закрыть её (отказ от предложения или отзыв) и создать новую на этих условиях — одним действием",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ReapplyIn"
+      },
       "SettingIn": {
         "properties": {
           "value": {
@@ -4627,6 +4743,23 @@
           "code"
         ],
         "title": "SignConfirmIn"
+      },
+      "SignatureRequestIn": {
+        "properties": {
+          "conditions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConditionsIn"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Условия из конструктора, на которых сотрудник предлагает подать новую заявку"
+          }
+        },
+        "type": "object",
+        "title": "SignatureRequestIn"
       },
       "SimulationIn": {
         "properties": {

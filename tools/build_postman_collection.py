@@ -247,7 +247,8 @@ def build() -> dict:
         folder(
             "2. Встречное предложение и конструктор условий — ИП Кузнецова",
             "Экспресс-кредит 1 млн ₽ на 12 мес. при высокой долговой нагрузке: банк предлагает больший срок или меньшую сумму. "
-            "Конструктор показывает, что на 18 мес. банк одобрит автоматически, — новая заявка на этих условиях одобряется.",
+            "Конструктор узнаёт условия из предложения банка и подсказывает другие, при которых банк одобрит автоматически. "
+            "Отказ от предложения и новая заявка на условиях подсказки — один вызов; новая заявка одобряется автоматически.",
             [
                 login("Кузнецова", "kuznetsova"),
                 create("EXPRESS", "EXPANSION", 1_000_000, 12),
@@ -262,6 +263,10 @@ def build() -> dict:
                         "const app = pm.response.json();",
                         "pm.test('Встречное предложение', () => pm.expect(app.decision.outcome).to.eql('COUNTER_OFFER'));",
                         "pm.test('Два варианта', () => pm.expect(app.offers.length).to.eql(2));",
+                        "const full = app.offers.find(o => o.amount === app.amount);",
+                        "pm.test('Есть вариант на всю сумму', () => pm.expect(full).to.be.an('object'));",
+                        "if (full) { pm.collectionVariables.set('bankOfferId', full.id); "
+                        "pm.collectionVariables.set('bankOfferTerm', full.term_months); }",
                     ],
                 ),
                 request(
@@ -273,32 +278,59 @@ def build() -> dict:
                         "const s = pm.response.json();",
                         "pm.test('Тот же исход, что у заявки', () => pm.expect(s.result.outcome).to.eql('COUNTER_OFFER'));",
                         "pm.test('Нагрузка выше 40%', () => pm.expect(s.result.payment_share).to.be.above(s.result.payment_share_cap));",
-                        "pm.test('Есть подсказки', () => pm.expect(s.suggestions.length).to.be.above(0));",
+                        "const best = s.suggestions.find(x => x.result.outcome === 'APPROVE');",
+                        "pm.test('Есть подсказка с автоматическим одобрением', () => pm.expect(best).to.be.an('object'));",
+                        "pm.test('Подсказки не повторяют предложение банка', () => "
+                        "s.suggestions.forEach(x => pm.expect(x.result.offer).to.eql(null)));",
+                        "if (best) { pm.collectionVariables.set('simProduct', best.params.product_code); "
+                        "pm.collectionVariables.set('simAmount', best.params.amount); "
+                        "pm.collectionVariables.set('simTerm', best.params.term_months); }",
                     ],
                     description="Решение банка при текущих условиях заявки и подсказки, что изменить. Ничего не сохраняет.",
                 ),
                 request(
-                    "Конструктор условий: срок 18 мес.",
+                    "Конструктор условий: условия из предложения банка",
                     "POST",
                     "/api/v1/applications/{{appId}}/simulation",
-                    body={"term_months": 18, "with_suggestions": False},
+                    body={"amount": 1000000, "term_months": "{{bankOfferTerm}}", "with_suggestions": False},
                     tests=[
                         "const s = pm.response.json();",
                         "pm.test('Одобрим автоматически', () => pm.expect(s.result.outcome).to.eql('APPROVE'));",
+                        "pm.test('Узнаёт вариант из предложения', () => "
+                        "pm.expect(s.result.offer.id).to.eql(pm.collectionVariables.get('bankOfferId')));",
                     ],
+                    description="Условия совпадают с вариантом банка: его выбирают в предложении, новая заявка не нужна.",
                 ),
-                request("Отказаться от предложения", "POST", "/api/v1/applications/{{appId}}/offers/decline"),
                 request(
-                    "Новая заявка на выбранных условиях",
+                    "Новая заявка на условиях подсказки вместо предложения",
                     "POST",
                     "/api/v1/applications/{{appId}}/reapply",
-                    body={"term_months": 18},
+                    body={
+                        "product_code": "{{simProduct}}",
+                        "amount": "{{simAmount}}",
+                        "term_months": "{{simTerm}}",
+                        "replace_current": True,
+                    },
                     expect=201,
                     tests=[
                         "const n = pm.response.json();",
-                        "pm.test('Черновик на 18 мес.', () => { pm.expect(n.status).to.eql('DRAFT'); pm.expect(n.term_months).to.eql(18); });",
+                        "pm.test('Черновик на условиях подсказки', () => { pm.expect(n.status).to.eql('DRAFT'); "
+                        "pm.expect(n.term_months).to.eql(Number(pm.collectionVariables.get('simTerm'))); });",
                         "pm.test('Связан с исходной заявкой', () => pm.expect(n.parent_id).to.eql(pm.collectionVariables.get('appId')));",
+                        "pm.collectionVariables.set('parentId', pm.collectionVariables.get('appId'));",
                         "pm.collectionVariables.set('appId', n.id);",
+                    ],
+                    description="replace_current: отказ от действующего предложения и новая заявка — одной транзакцией.",
+                ),
+                request(
+                    "Исходная заявка закрыта отказом от предложения",
+                    "GET",
+                    "/api/v1/applications/{{parentId}}",
+                    tests=[
+                        "const old = pm.response.json();",
+                        "pm.test('Отказ клиента', () => pm.expect(old.status).to.eql('CLIENT_DECLINED'));",
+                        "pm.test('Ссылка на новую заявку', () => "
+                        "pm.expect(old.next_application.id).to.eql(pm.collectionVariables.get('appId')));",
                     ],
                 ),
                 consents(),
@@ -411,7 +443,59 @@ def build() -> dict:
             ],
         ),
         folder(
-            "6. Банк: мониторинг, параметры, сбои",
+            "6. Передача условий руководителю — ООО «Северный хлеб»",
+            "Главный бухгалтер без права подписи подбирает условия в конструкторе и передаёт их руководителю: "
+            "руководитель получает уведомление, а в заявке видит переданные условия.",
+            [
+                login("Смирнов (директор)", "smirnov"),
+                create("EXPRESS", "OTHER", 500_000, 6),
+                consents(),
+                submit(),
+                poll("Дождаться решения", "OFFER_READY"),
+                login("Орлова (главный бухгалтер)", "orlova", var="employeeToken", company=False),
+                request(
+                    "Бухгалтер не заменяет заявку сам",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/reapply",
+                    token="employeeToken",
+                    body={"amount": 400000, "term_months": 12, "owner_guarantee": True, "replace_current": True},
+                    expect=403,
+                ),
+                request(
+                    "Передать условия руководителю",
+                    "POST",
+                    "/api/v1/applications/{{appId}}/request-signature",
+                    token="employeeToken",
+                    body={"conditions": {"amount": 400000, "term_months": 12, "owner_guarantee": True}},
+                    tests=[
+                        "const r = pm.response.json();",
+                        "pm.test('Условия сохранены в заявке', () => pm.expect(r.proposed_conditions.conditions.amount).to.eql(400000));",
+                    ],
+                ),
+                request(
+                    "Руководитель видит переданные условия",
+                    "GET",
+                    "/api/v1/applications/{{appId}}",
+                    tests=[
+                        "const pc = pm.response.json().proposed_conditions;",
+                        "pm.test('Условия от бухгалтера', () => { pm.expect(pc.conditions.amount).to.eql(400000); "
+                        "pm.expect(pc.conditions.term_months).to.eql(12); pm.expect(pc.conditions.owner_guarantee).to.eql(true); });",
+                        "pm.test('Кто предложил', () => pm.expect(pc.by).to.eql('Орлова Мария Петровна'));",
+                    ],
+                ),
+                request(
+                    "Уведомление руководителю",
+                    "GET",
+                    "/api/v1/notifications",
+                    tests=[
+                        "const items = pm.response.json().items;",
+                        "pm.test('Новые условия по заявке', () => pm.expect(items[0].title).to.include('Новые условия по заявке'));",
+                    ],
+                ),
+            ],
+        ),
+        folder(
+            "7. Банк: мониторинг, параметры, сбои",
             "Дашборд конвейера, изменение ключевой ставки риск-менеджером, моделирование сбоя БКИ.",
             [
                 login("Белов (риск-менеджер)", "risk", var="bankToken", company=False),
@@ -457,6 +541,7 @@ def build() -> dict:
             {"key": "password", "value": "demo1234"},
             {"key": "clientToken", "value": ""},
             {"key": "bankToken", "value": ""},
+            {"key": "employeeToken", "value": ""},
             {"key": "companyId", "value": ""},
             {"key": "appId", "value": ""},
             {"key": "offerId", "value": ""},
@@ -466,6 +551,12 @@ def build() -> dict:
             {"key": "recProduct", "value": ""},
             {"key": "recAmount", "value": ""},
             {"key": "recTerm", "value": ""},
+            {"key": "bankOfferId", "value": ""},
+            {"key": "bankOfferTerm", "value": ""},
+            {"key": "simProduct", "value": ""},
+            {"key": "simAmount", "value": ""},
+            {"key": "simTerm", "value": ""},
+            {"key": "parentId", "value": ""},
         ],
         "item": folders,
     }
