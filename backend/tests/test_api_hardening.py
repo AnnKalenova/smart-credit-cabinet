@@ -61,6 +61,7 @@ def test_demo_features_are_off_outside_demo_mode(api, login, monkeypatch):
     a.call("GET", "/api/v1/bank/integrations/faults", expect=404)
     a.call("POST", "/api/v1/bank/integrations/faults", json={"service": "BKI", "mode": "down"}, expect=404)
     assert api.get("/api/v1/auth/demo-accounts").status_code == 404
+    assert api.get("/api/v1/auth/demo-showcase").status_code == 404
     challenge = c.call("POST", _url(app, "/sign-challenges"), json={"purpose": "CONSENTS"})
     assert challenge["demo_code"] is None
 
@@ -166,7 +167,6 @@ def test_request_id_from_outside_is_validated(api):
         assert echoed != bad and len(echoed) == 32
 
 
-# --------------------------------------------------------------------------- файлы
 def test_exhausted_db_pool_returns_503_not_500(api, login, monkeypatch):
     """Все соединения с БД заняты: сервис перегружен, а не сломан — 503 с Retry-After и понятным текстом,
     чтобы кабинет предложил повторить, а не показал «внутренняя ошибка»."""
@@ -188,6 +188,7 @@ def test_exhausted_db_pool_returns_503_not_500(api, login, monkeypatch):
     assert len(resp.json()["request_id"]) == 32
 
 
+# --------------------------------------------------------------------------- файлы
 
 
 def test_dangerous_file_names_are_neutralized(login):

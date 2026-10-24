@@ -40,6 +40,7 @@ from app.models import (
     Product,
     ScoringResult,
 )
+from app.services.workflow import key_rate
 
 
 def company_turnover(db: Session, company_id) -> TurnoverStats:
@@ -60,7 +61,6 @@ def revenue_confirmed(app: Application) -> bool:
     return any(d.doc_type == DocType.BANK_STATEMENT for d in app.documents)
 
 
-def effective_turnover(stats: TurnoverStats, app: Application) -> float:
 def revenue_info_rounds(db: Session, app_id) -> int:
     """Сколько раз по заявке уже просили подтвердить выручку выпиской. Другие запросы (с проверки полноты —
     не хватает документа, не указан контакт; от специалиста) не считаются: иначе два таких запроса
@@ -75,6 +75,7 @@ def revenue_info_rounds(db: Session, app_id) -> int:
     )
 
 
+def effective_turnover(stats: TurnoverStats, app: Application) -> float:
     """Если клиент подтвердил выручку выпиской из другого банка — учитываем её с дисконтом 20%,
     но не больше чем вдвое выше поступлений на счёт в нашем банке."""
     base = stats.avg_monthly
@@ -299,6 +300,52 @@ def build_policy_input(
         documents={d.doc_type for d in app.documents},
         registration_date=company.registration_date,
         prior_manual_decline=prior_manual_decline(db, company.id, app.id, as_of),
+    )
+
+
+# --------------------------------------------------------------------------- пример на странице входа
+
+# Демо-сценарий «Автоматическое одобрение» (ООО «Северный хлеб»): его условия стоят на странице входа.
+# Рейтинг A и сильные стороны — часть сценария (константы); ставка и платёж считаются той же ценовой частью
+# политики (price, offer_economics) от текущей ключевой ставки, поэтому не расходятся с настоящим решением,
+# когда риск-менеджер меняет ставку
+SHOWCASE_COMPANY_KEY = "bakery"
+SHOWCASE_GRADE = "A"
+
+
+@dataclass
+class Showcase:
+    company: str
+    product_name: str
+    amount: float
+    term_months: int
+    rate: float
+    monthly_payment: float
+    grade: str
+    positives: list[str]
+
+
+def login_showcase(db: Session, data: dict, as_of: date) -> Showcase | None:
+    spec = next((c for c in data.get("companies", []) if c.get("key") == SHOWCASE_COMPANY_KEY), None)
+    req = (spec or {}).get("demo_request") or {}
+    if not spec or not {"product_code", "amount", "term_months"} <= set(req):
+        return None
+    company = db.scalar(select(Company).where(Company.inn == spec["inn"]))
+    product = db.get(Product, req["product_code"])
+    if company is None or product is None:
+        return None
+    params = ProductParams.from_orm(product)
+    rate, _ = price(params, SHOWCASE_GRADE, key_rate(db), False, False, months_between(company.client_since, as_of))
+    monthly, _ = offer_economics(float(req["amount"]), rate, int(req["term_months"]), params.repayment_type)
+    return Showcase(
+        company=company.short_name,
+        product_name=product.name,
+        amount=float(req["amount"]),
+        term_months=int(req["term_months"]),
+        rate=rate,
+        monthly_payment=monthly,
+        grade=SHOWCASE_GRADE,
+        positives=["Кредиты погашались без просрочек", "Бизнес работает больше 5 лет"],
     )
 
 

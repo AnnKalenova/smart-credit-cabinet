@@ -330,6 +330,7 @@ def test_bki_outage_goes_to_analyst_and_recovers_after_rerun(login):
     c = login("smirnov")
     app = c.prepare_and_submit("EXPRESS", "OTHER", 500_000, 6)
     assert app["status"] == "MANUAL_REVIEW"
+    assert app["sources_received"] == ["EGRUL", "FNS"]  # интерфейс показывает, на каком источнике остановились
     dossier = a.call("GET", _bank(app))
     assert dossier["decisions"][0]["reasons"][0]["code"] == "integration_unavailable"
     calls = dossier["integration_calls"]
@@ -341,7 +342,8 @@ def test_bki_outage_goes_to_analyst_and_recovers_after_rerun(login):
     a.call("POST", "/api/v1/bank/integrations/faults", json={"service": "BKI", "mode": "ok"})
     a.call("POST", _bank(app, "/rerun"))
     drain()
-    assert c.get(app["id"])["status"] == "OFFER_READY"
+    app = c.get(app["id"])
+    assert app["status"] == "OFFER_READY" and app["sources_received"] == ["EGRUL", "FNS", "BKI"]
 
 
 def test_actions_in_wrong_status_return_409(login):

@@ -119,6 +119,20 @@ class DemoAccount(BaseModel):
     scenario_hint: str | None = None
 
 
+class DemoShowcase(BaseModel):
+    """Пример решения банка на странице входа: условия демо-сценария «Автоматическое одобрение». Ставка и
+    платёж посчитаны ценовой частью кредитной политики от текущей ключевой ставки, рейтинг — из сценария."""
+
+    company: str
+    product_name: str
+    amount: float
+    term_months: int
+    rate: float
+    monthly_payment: float
+    grade: str
+    positives: list[str]
+
+
 # --------------------------------------------------------------------------- справочники и компания
 
 
@@ -322,6 +336,10 @@ class ApplicationSummaryOut(BaseModel):
 
 class ApplicationOut(ApplicationSummaryOut):
     purpose_details: str | None
+    sources_received: list[str] = Field(
+        default_factory=list,
+        description="Внешние источники, которые уже ответили по заявке, в порядке опроса: EGRUL, FNS, BKI",
+    )
     declared_revenue: float | None
     has_collateral: bool
     collateral_description: str | None

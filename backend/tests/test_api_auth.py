@@ -29,6 +29,24 @@ def test_demo_accounts_cover_all_roles(api):
     assert all(a["password"] == "demo1234" and a["scenario"] for a in accounts)
 
 
+def test_login_showcase_follows_key_rate(api, login):
+    """Пример решения на странице входа считается той же политикой, что и настоящее решение по демо-сценарию
+    «Автоматическое одобрение», и от текущей ключевой ставки — цифры не устаревают, когда ставку меняют."""
+    showcase = api.get("/api/v1/auth/demo-showcase").json()
+    assert showcase["company"] == "ООО «Северный хлеб»" and showcase["product_name"] == "Оборотный кредит"
+    assert showcase["amount"] == 3_000_000 and showcase["term_months"] == 12 and showcase["grade"] == "A"
+    assert showcase["rate"] == 18.5 and round(showcase["monthly_payment"]) == 275_754  # ключевая 14% + 5 − 0,5
+    assert showcase["positives"]
+
+    risk = login("risk")
+    risk.call("PUT", "/api/v1/bank/settings/key_rate", json={"value": 15})
+    try:
+        changed = api.get("/api/v1/auth/demo-showcase").json()
+        assert changed["rate"] == 19.5 and changed["monthly_payment"] > showcase["monthly_payment"]
+    finally:
+        risk.call("PUT", "/api/v1/bank/settings/key_rate", json={"value": 14})
+
+
 def test_role_guards(login):
     client, analyst, risk = login("smirnov"), login("analyst"), login("risk")
     client.call("GET", "/api/v1/bank/applications", expect=403)

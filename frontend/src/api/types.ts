@@ -35,6 +35,18 @@ export interface DemoAccount {
   scenario_hint?: string | null;
 }
 
+/** Пример решения на странице входа: демо-сценарий «Автоматическое одобрение», посчитанный от текущей ключевой ставки */
+export interface DemoShowcase {
+  company: string;
+  product_name: string;
+  amount: number;
+  term_months: number;
+  rate: number;
+  monthly_payment: number;
+  grade: string;
+  positives: string[];
+}
+
 export interface Purpose {
   code: string;
   label: string;
@@ -259,6 +271,8 @@ export interface ClientDecision {
 
 export interface Application extends ApplicationSummary {
   purpose_details: string | null;
+  /** внешние источники, которые уже ответили по заявке, в порядке опроса: EGRUL, FNS, BKI */
+  sources_received: string[];
   declared_revenue: number | null;
   has_collateral: boolean;
   collateral_description: string | null;

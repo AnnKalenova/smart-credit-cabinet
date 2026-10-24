@@ -161,6 +161,31 @@
         }
       }
     },
+    "/api/v1/auth/demo-showcase": {
+      "get": {
+        "tags": [
+          "Аутентификация"
+        ],
+        "summary": "Пример решения для страницы входа (только в демо-режиме)",
+        "description": "Условия демо-сценария «Автоматическое одобрение»: ставка и платёж посчитаны той же ценовой частью\nкредитной политики от текущей ключевой ставки (рейтинг A — часть сценария), поэтому цифры на странице\nвхода не расходятся с кабинетом, когда риск-менеджер меняет ставку.",
+        "operationId": "demo_showcase_api_v1_auth_demo_showcase_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoShowcase"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не демо-режим или демо-данные не загружены"
+          }
+        }
+      }
+    },
     "/api/v1/dictionaries": {
       "get": {
         "tags": [
@@ -2512,6 +2537,14 @@
             ],
             "title": "Purpose Details"
           },
+          "sources_received": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources Received",
+            "description": "Внешние источники, которые уже ответили по заявке, в порядке опроса: EGRUL, FNS, BKI"
+          },
           "declared_revenue": {
             "anyOf": [
               {
@@ -3677,6 +3710,58 @@
           "scenario"
         ],
         "title": "DemoAccount"
+      },
+      "DemoShowcase": {
+        "properties": {
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "product_name": {
+            "type": "string",
+            "title": "Product Name"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "term_months": {
+            "type": "integer",
+            "title": "Term Months"
+          },
+          "rate": {
+            "type": "number",
+            "title": "Rate"
+          },
+          "monthly_payment": {
+            "type": "number",
+            "title": "Monthly Payment"
+          },
+          "grade": {
+            "type": "string",
+            "title": "Grade"
+          },
+          "positives": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Positives"
+          }
+        },
+        "type": "object",
+        "required": [
+          "company",
+          "product_name",
+          "amount",
+          "term_months",
+          "rate",
+          "monthly_payment",
+          "grade",
+          "positives"
+        ],
+        "title": "DemoShowcase",
+        "description": "Пример решения банка на странице входа: условия демо-сценария «Автоматическое одобрение». Ставка и\nплатёж посчитаны ценовой частью кредитной политики от текущей ключевой ставки, рейтинг — из сценария."
       },
       "DictionariesOut": {
         "properties": {

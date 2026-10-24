@@ -25,17 +25,19 @@ const PIPELINE = [
   { key: "DECISION", title: "Подбор суммы, срока и ставки" },
 ];
 
+const SOURCES = ["EGRUL", "FNS", "BKI"];
+
 function stepState(app: Application, key: string): "done" | "now" | "wait" {
   const order = ["SUBMITTED", "PRECHECK", "ENRICHMENT", "SCORING", "DECISION"];
   const statusIdx = order.indexOf(app.status);
-  const detail = app.stage_detail ?? "";
   if (key === "PRECHECK") return statusIdx > 1 ? "done" : "now";
-  if (["EGRUL", "FNS", "BKI"].includes(key)) {
+  if (SOURCES.includes(key)) {
     if (statusIdx > 2) return "done";
     if (statusIdx < 2) return "wait";
-    const current = detail.includes("ЕГРЮЛ") || detail.includes("ЕГРИП") ? "EGRUL" : detail.includes("ФНС") ? "FNS" : detail.includes("БКИ") || detail.includes("кредитных") ? "BKI" : "EGRUL";
-    const seq = ["EGRUL", "FNS", "BKI"];
-    return seq.indexOf(key) < seq.indexOf(current) ? "done" : key === current ? "now" : "wait";
+    // источники опрашиваются по порядку; сервер сообщает, какие уже ответили, — текст подсказки не разбираем
+    if (app.sources_received.includes(key)) return "done";
+    const current = SOURCES.find((s) => !app.sources_received.includes(s));
+    return key === current ? "now" : "wait";
   }
   if (key === "SCORING") return statusIdx > 3 ? "done" : statusIdx === 3 ? "now" : "wait";
   return statusIdx === 4 ? "now" : "wait";

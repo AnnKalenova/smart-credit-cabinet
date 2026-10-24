@@ -8,10 +8,11 @@ from app.config import get_settings
 from app.db import get_db
 from app.domain.enums import POSITION_LABELS
 from app.models import CompanyMember, LoginAttempt, User
-from app.schemas import DemoAccount, LoginIn, MeOut, TokenOut
+from app.schemas import DemoAccount, DemoShowcase, LoginIn, MeOut, TokenOut
 from app.security import create_access_token, get_current_user, hash_password, verify_password
-from app.seed import DEMO_ACCOUNTS
-from app.services.workflow import utcnow
+from app.seed import DEMO_ACCOUNTS, load_data
+from app.services.assessment import login_showcase
+from app.services.workflow import local_today, utcnow
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Аутентификация"])
 settings = get_settings()
@@ -102,3 +103,21 @@ def demo_accounts():
     if not settings.demo_mode:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Недоступно")
     return DEMO_ACCOUNTS
+
+
+@router.get(
+    "/demo-showcase",
+    response_model=DemoShowcase,
+    summary="Пример решения для страницы входа (только в демо-режиме)",
+    responses={404: {"description": "Не демо-режим или демо-данные не загружены"}},
+)
+def demo_showcase(db: Session = Depends(get_db)):
+    """Условия демо-сценария «Автоматическое одобрение»: ставка и платёж посчитаны той же ценовой частью
+    кредитной политики от текущей ключевой ставки (рейтинг A — часть сценария), поэтому цифры на странице
+    входа не расходятся с кабинетом, когда риск-менеджер меняет ставку."""
+    if not settings.demo_mode:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Недоступно")
+    showcase = login_showcase(db, load_data(), local_today())
+    if showcase is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Демо-данные не загружены")
+    return showcase

@@ -3,7 +3,7 @@ import { Check, CirclePlus, LogIn } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-import type { DemoAccount } from "../api/types";
+import type { DemoAccount, DemoShowcase } from "../api/types";
 import { Brand } from "../components/Layout";
 import { forgetSessionExpired, sessionExpired, useAuth } from "../lib/auth";
 import { money, pct } from "../lib/format";
@@ -13,8 +13,9 @@ const ROUTE = ["Задача", "Заявка", "Проверка", "Предло
 const OFFER_STEP = 3;
 
 /** Путь заявки и решение, которое клиент видит на шаге «Предложение». Цифры — из демо-сценария
- *  «Автоматическое одобрение» (ООО «Северный хлеб», вход «smirnov») при ставках по умолчанию. */
-function Showcase() {
+ *  «Автоматическое одобрение» (ООО «Северный хлеб», вход «smirnov»); сервер считает их той же политикой
+ *  и от той же ключевой ставки, что и настоящее решение, поэтому они не расходятся с кабинетом. */
+function Showcase({ sample, unavailable }: { sample: DemoShowcase | undefined; unavailable: boolean }) {
   return (
     <figure className="login-show">
       <ol className="login-route" aria-label="Путь заявки">
@@ -32,35 +33,45 @@ function Showcase() {
           </li>
         ))}
       </ol>
-      <div className="login-sample">
+      <div className="login-sample" aria-busy={!sample && !unavailable}>
         <span className="login-sample-status">Одобрено автоматически</span>
-        <p className="login-sample-amount">
-          {money(3_000_000)} <small>на 12 мес.</small>
-        </p>
-        <p className="login-sample-what">
-          Оборотный кредит, <span className="nowrap">ООО «Северный хлеб»</span>
-        </p>
-        <dl className="login-sample-terms">
-          <div>
-            <dt>Ставка</dt>
-            <dd>{pct(18.5)}</dd>
-          </div>
-          <div>
-            <dt>Платёж в месяц</dt>
-            <dd>{money(275_754)}</dd>
-          </div>
-        </dl>
+        {/* вне демо-режима примера с цифрами нет: показываем путь без сумм, а не прочерки */}
+        {!unavailable && (
+          <>
+            <p className="login-sample-amount">
+              {sample ? money(sample.amount) : "…"} <small>{sample ? `на ${sample.term_months} мес.` : ""}</small>
+            </p>
+            <p className="login-sample-what">
+              {sample ? (
+                <>
+                  {sample.product_name}, <span className="nowrap">{sample.company}</span>
+                </>
+              ) : (
+                "Демо-заявка"
+              )}
+            </p>
+            <dl className="login-sample-terms">
+              <div>
+                <dt>Ставка</dt>
+                <dd>{sample ? pct(sample.rate) : "…"}</dd>
+              </div>
+              <div>
+                <dt>Платёж в месяц</dt>
+                <dd>{sample ? money(Math.round(sample.monthly_payment)) : "…"}</dd>
+              </div>
+            </dl>
+          </>
+        )}
         <div className="login-sample-why">
           <span>Помогло решению</span>
-          <p>
-            <CirclePlus size={16} aria-hidden /> Кредиты погашались без просрочек
-          </p>
-          <p>
-            <CirclePlus size={16} aria-hidden /> Бизнес работает больше 5 лет
-          </p>
+          {(sample?.positives ?? ["Кредиты погашались без просрочек", "Бизнес работает больше 5 лет"]).map((text) => (
+            <p key={text}>
+              <CirclePlus size={16} aria-hidden /> {text}
+            </p>
+          ))}
         </div>
       </div>
-      <figcaption className="sr-only">Пример решения банка по демо-заявке</figcaption>
+      <figcaption className="sr-only">Пример решения банка по демо-заявке при текущей ключевой ставке</figcaption>
     </figure>
   );
 }
@@ -104,6 +115,12 @@ export function LoginPage() {
     queryFn: () => api<DemoAccount[]>("/api/v1/auth/demo-accounts"),
     retry: false,
   });
+  const showcase = useQuery({
+    queryKey: ["demo-showcase"],
+    queryFn: () => api<DemoShowcase>("/api/v1/auth/demo-showcase"),
+    retry: false,
+    staleTime: 60_000,
+  });
 
   // вход завершился, пока страница ещё открыта, — сюда же, куда ведёт и сама кнопка входа
   if (me) return <Navigate to={target(me.user.role)} replace />;
@@ -143,7 +160,7 @@ export function LoginPage() {
             Весь путь — в одном кабинете. Банк рассматривает заявку сразу: автоматически, когда это безопасно, и со специалистом, когда
             нужна экспертиза.
           </p>
-          <Showcase />
+          <Showcase sample={showcase.data} unavailable={showcase.isError} />
         </div>
       </aside>
       <main className="login-main">

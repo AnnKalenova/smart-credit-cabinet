@@ -47,6 +47,9 @@ from app.models import (
 from app.services import assessment
 from app.services.workflow import local_today, utcnow
 
+# внешние источники сведений в порядке опроса (INTERNAL — обороты по счёту — банк знает сам)
+EXTERNAL_SOURCES = ("EGRUL", "FNS", "BKI")
+
 
 def local_time(dt):
     """Время в часовом поясе клиента (по умолчанию московское) — сервер в контейнере живёт в UTC."""
@@ -470,9 +473,16 @@ def application_out(db: Session, app: Application, member: CompanyMember) -> dic
     data = summary_out(app)
     data["status_view"] = client_status_view(db, app, offers, member)
     child = next_application(db, app)
+    # какие внешние источники уже ответили — по ним интерфейс показывает ход сбора сведений
+    received = db.scalars(
+        select(EnrichmentResult.source)
+        .where(EnrichmentResult.application_id == app.id, EnrichmentResult.source.in_(EXTERNAL_SOURCES))
+        .order_by(EnrichmentResult.id)
+    ).all()
     data.update(
         {
             "purpose_details": app.purpose_details,
+            "sources_received": received,
             "declared_revenue": float(app.declared_revenue) if app.declared_revenue is not None else None,
             "has_collateral": app.has_collateral,
             "collateral_description": app.collateral_description,
