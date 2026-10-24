@@ -47,12 +47,17 @@ def _handle_signal(signum, frame):  # noqa: ARG001
 
 
 def claim_job(db: Session) -> int | None:
+    """Берёт из очереди один этап. Сначала — этапы заявок, отправленных раньше: при всплеске подач каждая заявка
+    проходит все этапы подряд и получает решение в порядке очереди, а не все заявки по одному этапу «хором»
+    (тогда первое решение появилось бы только вместе с последним). Среди этапов одной заявки — в порядке
+    времени, когда их можно выполнять."""
     job = db.scalar(
         select(PipelineJob)
+        .join(Application, Application.id == PipelineJob.application_id)
         .where(PipelineJob.status == JobStatus.PENDING, PipelineJob.run_after <= utcnow())
-        .order_by(PipelineJob.run_after)
+        .order_by(Application.submitted_at.nulls_last(), PipelineJob.run_after, PipelineJob.id)
         .limit(1)
-        .with_for_update(skip_locked=True)
+        .with_for_update(of=PipelineJob, skip_locked=True)
     )
     if job is None:
         db.rollback()

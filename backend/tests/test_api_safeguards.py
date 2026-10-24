@@ -207,6 +207,37 @@ def test_abandoned_stage_returns_to_queue_then_goes_to_specialist(login, monkeyp
     assert c.get(app["id"])["status"] == "OFFER_READY"
 
 
+def test_queue_serves_earlier_applications_first(login):
+    """При всплеске подач воркер ведёт заявки по очереди их отправки: этап заявки, отправленной раньше, берётся
+    первым, даже если этап более поздней заявки появился в очереди раньше. Иначе все заявки шли бы по этапам
+    «хором», и первое решение появлялось бы только вместе с последним."""
+    from app.db import SessionLocal
+    from app.models import PipelineJob
+    from app.services.workflow import utcnow
+    from app.worker.runner import claim_job, process_job
+
+    c = login("smirnov")
+    first = c.draft("EXPRESS", "OTHER", 310_000, 6)
+    second = c.draft("EXPRESS", "OTHER", 320_000, 6)
+    for app in (first, second):
+        c.sign_consents(app["id"])
+        c.submit(app["id"])  # этап PRECHECK поставлен в очередь, воркер его ещё не взял
+    with SessionLocal() as db:
+        # этап первой заявки оказался в очереди позже этапа второй (так бывает, когда первая уже прошла шаг)
+        for app, seconds_ago in ((first, 1), (second, 2)):
+            db.execute(
+                update(PipelineJob)
+                .where(PipelineJob.application_id == app["id"])
+                .values(run_after=utcnow() - timedelta(seconds=seconds_ago))
+            )
+        db.commit()
+        job_id = claim_job(db)
+        assert str(db.get(PipelineJob, job_id).application_id) == first["id"]
+    process_job(job_id)
+    drain()
+    assert {c.get(a["id"])["status"] for a in (first, second)} == {"OFFER_READY"}
+
+
 # --------------------------------------------------------------------------- запросы уточнений
 
 
