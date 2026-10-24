@@ -586,7 +586,10 @@ export function ConditionsBuilder({ app }: { app: Application }) {
             {sim.isError ? (
               <div className="verdict negative" role="alert">
                 <div className="verdict-title">Не удалось пересчитать решение</div>
-                <p className="small muted">Сервис не ответил. Условия, которые вы выбрали, сохранены — нажмите «Пересчитать».</p>
+                <p className="small muted">
+                  {sim.error instanceof ApiError && sim.error.status === 429 ? sim.error.message : "Сервис не ответил."} Условия, которые вы
+                  выбрали, сохранены — нажмите «Пересчитать».
+                </p>
               </div>
             ) : r ? (
               <Verdict r={r} stale={stale} />
