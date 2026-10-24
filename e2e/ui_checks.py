@@ -32,17 +32,34 @@ from api_scenarios import Client, prepare  # noqa: E402
 
 DIRECTOR = "Смирнов Алексей Викторович"
 
+# nginx пропускает не больше 20 входов в минуту с одного адреса (пачкой — до 10), а проверок десять и у каждой
+# был свой вход по API и в браузере: лишние входы получали 429, и кнопка входа не вела в кабинет.
+# Поэтому на каждую учётку — один вход по API за весь прогон, а в браузере — один вход кнопкой.
+_clients: dict[str, Client] = {}
+_ui_token: str | None = None
+
+
+def api_client(base: str, login: str) -> Client:
+    if login not in _clients:
+        _clients[login] = Client(base, login)
+    return _clients[login]
+
 
 async def open_draft(page: Page, base: str, app_id: str) -> None:
+    global _ui_token
     await page.goto(f"{base}/login")
-    await page.get_by_role("button", name=DIRECTOR).first.click()
-    await page.wait_for_url(lambda url: "/c" in url)
+    if _ui_token is None:
+        await page.get_by_role("button", name=DIRECTOR).first.click()
+        await page.wait_for_url(lambda url: "/c" in url)
+        _ui_token = await page.evaluate("localStorage.getItem('scc.token')")
+    else:
+        await page.evaluate("t => localStorage.setItem('scc.token', t)", _ui_token)
     await page.goto(f"{base}/c/applications/{app_id}")
     await page.get_by_role("heading", name="Параметры кредита").wait_for()
 
 
 def new_draft(base: str) -> tuple[Client, dict]:
-    c = Client(base, "smirnov")
+    c = api_client(base, "smirnov")
     return c, prepare(c, "EXPRESS", "OTHER", 300_000, 6, purpose_details="Проверка автосохранения")
 
 
@@ -291,7 +308,7 @@ async def check_layout_widths(page: Page, base: str) -> str:
     client.req("POST", f"/api/v1/applications/{sent['id']}/submit")
     tokens = {"smirnov": client.http.headers["Authorization"].split()[1]}
     for login in ("analyst", "risk"):
-        tokens[login] = Client(base, login).http.headers["Authorization"].split()[1]
+        tokens[login] = api_client(base, login).http.headers["Authorization"].split()[1]
 
     def heading(name: str):
         return lambda p: p.get_by_role("heading", name=name, exact=True)
