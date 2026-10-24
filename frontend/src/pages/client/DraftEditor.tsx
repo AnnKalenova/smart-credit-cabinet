@@ -76,6 +76,9 @@ export function DraftEditor({ app }: { app: Application }) {
   const blocker = useBlocker(() => edited && Boolean(getToken()));
   // изменения, которых ещё нет на сервере; при ошибке сохранения они остаются здесь до следующей попытки
   const dirty = useRef<Partial<Record<keyof Draft, unknown>>>({});
+  // в поле суммы пусто или не число: на сервер такое не уходит, но это правка клиента, и подтянутые с сервера
+  // данные не должны вернуть в поле прежнюю сумму, пока он её вводит
+  const amountIncomplete = useRef(false);
   const timer = useRef<number | undefined>(undefined);
   // сохранения идут строго по одному: следующее начинается, когда закончилось предыдущее
   const queue = useRef<Promise<void>>(Promise.resolve());
@@ -150,7 +153,7 @@ export function DraftEditor({ app }: { app: Application }) {
   // Если заявку обновили извне (другая вкладка, документы) — подтягиваем данные, но только когда все правки
   // уже на сервере: иначе форма откатилась бы к прежним значениям
   useEffect(() => {
-    if (Object.keys(dirty.current).length === 0 && pending.current === 0) setD(toDraft(app));
+    if (Object.keys(dirty.current).length === 0 && pending.current === 0 && !amountIncomplete.current) setD(toDraft(app));
   }, [app]);
 
   const saveOnce = async () => {
@@ -222,7 +225,8 @@ export function DraftEditor({ app }: { app: Application }) {
     if (key === "amount") {
       // сумма обязательна: пустое или нулевое значение не сохраняем, пока клиент не введёт число
       const n = parseAmount(String(value));
-      if (n > 0 && n <= MAX_AMOUNT) dirty.current.amount = n;
+      amountIncomplete.current = !(n > 0 && n <= MAX_AMOUNT);
+      if (!amountIncomplete.current) dirty.current.amount = n;
       else delete dirty.current.amount;
     } else if (key === "declared_revenue") {
       dirty.current.declared_revenue = parseAmount(String(value)) || null;

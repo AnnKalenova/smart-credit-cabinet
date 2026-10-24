@@ -7,6 +7,8 @@
 4. При сбое сохранения переход, «Назад» и выход отменяются; после восстановления связи правка сохраняется.
 5. Медленный запрос не теряется при выходе, а перезагрузка предупреждает о несохранённых изменениях.
 6. Вёрстка ключевых экранов клиента и банка не уезжает за край окна ни на телефоне, ни на широком мониторе.
+7. Клиент стёр сумму и ещё не ввёл новую, а заявка тем временем изменилась (приложен документ): подгрузка
+   изменений не возвращает в поле прежнюю сумму.
 
     pip install playwright httpx && python -m playwright install chromium
     python e2e/ui_checks.py --base-url http://localhost:8080
@@ -355,8 +357,28 @@ async def check_layout_widths(page: Page, base: str) -> str:
     return f"{len(screens)} экранов при ширине {', '.join(map(str, LAYOUT_WIDTHS))} px — ничего не уходит за край окна"
 
 
+async def check_cleared_amount_survives_refetch(page: Page, base: str) -> str:
+    c, app = new_draft(base)
+    url = f"/api/v1/applications/{app['id']}"
+    await open_draft(page, base, app["id"])
+    amount = page.get_by_label("Сумма")
+    await amount.fill("")
+    await expect(page.get_by_text("Укажите сумму")).to_be_visible()
+    # пока поле пустое, заявка изменилась: приложен документ (из другой вкладки или кнопкой «Пример файла»).
+    # Интерфейс подгружает изменения — но не должен возвращать в поле стёртую сумму
+    await asyncio.to_thread(c.req, "POST", f"{url}/documents/demo", params={"doc_type": "OTHER"})
+    await expect(page.get_by_text("(пример).txt")).to_be_visible(timeout=15_000)  # изменения подгружены
+    await page.wait_for_timeout(300)
+    await expect(amount).to_have_value("")  # прежние 300 000 ₽ не вернулись в поле
+    await amount.fill("450000")
+    saved = await asyncio.to_thread(wait_for, c, url, lambda a: a["amount"] == 450_000)
+    assert saved["amount"] == 450_000, f"новая сумма не сохранилась: {saved['amount']}"
+    return "после очистки поля подгрузка изменений (приложен документ) не вернула прежнюю сумму, новая сохранилась"
+
+
 CHECKS = [
     ("Ошибка автосохранения не отправляет старую сумму", check_failed_autosave),
+    ("Стёртая сумма не затирается подгрузкой изменений", check_cleared_amount_survives_refetch),
     ("Отправка ждёт медленного автосохранения", check_slow_autosave),
     ("Правка сохраняется при уходе из черновика", check_leave_right_after_edit),
     ("Правка сохраняется при выходе из кабинета", check_logout_right_after_edit),

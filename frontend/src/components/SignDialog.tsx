@@ -1,5 +1,5 @@
 import { FileSignature, KeyRound } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { SignChallenge } from "../api/types";
 import { errorText } from "../lib/toast";
@@ -24,6 +24,7 @@ export function SignDialog({
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false); // Enter и кнопка не отправляют код второй раз, пока первый запрос не завершился
 
   const ask = () => api<SignChallenge>(`/api/v1/applications/${appId}/sign-challenges`, { method: "POST", json: { purpose } });
   const requestCode = () => {
@@ -46,7 +47,8 @@ export function SignDialog({
   }, []);
 
   const confirm = async () => {
-    if (!challenge) return;
+    if (!challenge || code.length < 6 || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -55,6 +57,7 @@ export function SignDialog({
     } catch (e) {
       setError(e instanceof ApiError ? e.message : errorText(e));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -96,7 +99,7 @@ export function SignDialog({
                 <b>{challenge.demo_code}</b>
               </span>
             </span>
-            <button className="btn btn-ghost btn-s" onClick={() => setCode(challenge.demo_code ?? "")}>
+            <button className="btn btn-ghost btn-s" disabled={busy} onClick={() => setCode(challenge.demo_code ?? "")}>
               Вставить код
             </button>
           </div>
@@ -111,11 +114,11 @@ export function SignDialog({
             maxLength={6}
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-            onKeyDown={(e) => e.key === "Enter" && code.length === 6 && confirm()}
+            onKeyDown={(e) => e.key === "Enter" && void confirm()}
           />
           <span className="field-hint">
             Код действует 5 минут.{" "}
-            <button className="btn-link" onClick={requestCode}>
+            <button className="btn-link" disabled={busy} onClick={requestCode}>
               Получить новый код
             </button>
           </span>
