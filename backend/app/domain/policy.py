@@ -32,6 +32,7 @@ REVENUE_MISMATCH_RATIO = 1.6  # заявленная выручка больше
 STATEMENT_HAIRCUT = 0.8  # подтверждённая выпиской выручка учитывается с дисконтом 20%
 # ...и не больше чем вдвое выше поступлений на счёт в банке: выписку из другого банка автоматически не разбираем
 CONFIRMED_REVENUE_CAP = 2.0
+REVENUE_STATEMENT_ITEM = "revenue_statement"  # пункт «выписка из другого банка» в запросе банка
 TAX_ARREARS_MANUAL = 300_000
 # после отказа кредитного специалиста новые заявки компании в течение этого срока решает человек
 MANUAL_DECLINE_MEMORY_DAYS = 90
@@ -116,7 +117,9 @@ class PolicyInput:
     owner_guarantee: bool
     declared_revenue: float | None
     revenue_confirmed: bool  # клиент приложил выписку из другого банка
-    info_rounds: int
+    # сколько раз банк уже просил подтвердить выручку выпиской. Запросы с проверки полноты
+    # (не хватает документа, не указан контакт) сюда не входят: они про другое
+    revenue_info_rounds: int
     key_rate: float
     as_of: date
     avg_monthly_turnover: float
@@ -342,7 +345,7 @@ def info_checks(inp: PolicyInput) -> list[dict]:
         if ratio > REVENUE_MISMATCH_RATIO:
             items.append(
                 {
-                    "code": "revenue_statement",
+                    "code": REVENUE_STATEMENT_ITEM,
                     "type": "DOCUMENT",
                     "doc_type": "BANK_STATEMENT",
                     "label": "Выписка по счёту в другом банке за последние 6–12 месяцев",
@@ -491,7 +494,8 @@ def evaluate(inp: PolicyInput) -> PolicyResult:
     info_items = info_checks(inp)
     unresolved_info = False
     if info_items:
-        if inp.info_rounds < 2:
+        # выписку просим не больше двух раз; третий раз расхождение смотрит специалист
+        if inp.revenue_info_rounds < 2:
             reasons = [
                 Reason(
                     "revenue_mismatch",

@@ -244,7 +244,6 @@ class Simulator:
             has_collateral=collateral,
             owner_guarantee=p.owner_guarantee,
             declared_revenue=self.app.declared_revenue,
-            info_rounds=self.app.info_rounds,
         )
         scoring = score(
             assessment.build_scoring_input(

@@ -68,7 +68,7 @@ def _input(product="WORKING_CAPITAL", grade="A", turnover=4_600_000.0, **overrid
         "owner_guarantee": False,
         "declared_revenue": None,
         "revenue_confirmed": False,
-        "info_rounds": 0,
+        "revenue_info_rounds": 0,
         "key_rate": KEY_RATE,
         "as_of": date(2026, 10, 23),
         "avg_monthly_turnover": turnover,
@@ -136,10 +136,16 @@ def test_confirmed_revenue_does_not_request_info():
 
 
 def test_unresolved_mismatch_after_two_rounds_goes_to_analyst():
-    result = evaluate(_input(declared_revenue=4_600_000 * 12 * 2, info_rounds=2))
+    result = evaluate(_input(declared_revenue=4_600_000 * 12 * 2, revenue_info_rounds=2))
     assert result.outcome == DecisionOutcome.MANUAL_REVIEW
     assert "info_unresolved" in _codes(result)
     assert result.recommendation == DecisionOutcome.APPROVE
+
+
+def test_mismatch_is_requested_once_more_after_single_revenue_round():
+    # один запрос выписки уже был (ответ без выписки не принимается, но на всякий случай): просим второй раз
+    result = evaluate(_input(declared_revenue=4_600_000 * 12 * 2, revenue_info_rounds=1))
+    assert result.outcome == DecisionOutcome.NEEDS_INFO
 
 
 # --------------------------------------------------------------------------- одобрение и встречные предложения

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -17,6 +17,7 @@ from app.domain.policy import (
     DTI_CAP,
     GRADE_LIMIT_FACTOR,
     MANUAL_DECLINE_MEMORY_DAYS,
+    REVENUE_STATEMENT_ITEM,
     STATEMENT_HAIRCUT,
     PolicyInput,
     ProductParams,
@@ -33,6 +34,7 @@ from app.models import (
     Company,
     Decision,
     EnrichmentResult,
+    InfoRequest,
     Loan,
     Offer,
     Product,
@@ -59,6 +61,20 @@ def revenue_confirmed(app: Application) -> bool:
 
 
 def effective_turnover(stats: TurnoverStats, app: Application) -> float:
+def revenue_info_rounds(db: Session, app_id) -> int:
+    """Сколько раз по заявке уже просили подтвердить выручку выпиской. Другие запросы (с проверки полноты —
+    не хватает документа, не указан контакт; от специалиста) не считаются: иначе два таких запроса
+    отправили бы заявку специалисту «за неустранённое расхождение», о котором клиента ни разу не спрашивали."""
+    return db.scalar(
+        select(func.count())
+        .select_from(InfoRequest)
+        .where(
+            InfoRequest.application_id == app_id,
+            InfoRequest.items.contains([{"code": REVENUE_STATEMENT_ITEM}]),
+        )
+    )
+
+
     """Если клиент подтвердил выручку выпиской из другого банка — учитываем её с дисконтом 20%,
     но не больше чем вдвое выше поступлений на счёт в нашем банке."""
     base = stats.avg_monthly
@@ -268,7 +284,7 @@ def build_policy_input(
         owner_guarantee=app.owner_guarantee,
         declared_revenue=float(app.declared_revenue) if app.declared_revenue else None,
         revenue_confirmed=revenue_confirmed(app),
-        info_rounds=app.info_rounds,
+        revenue_info_rounds=revenue_info_rounds(db, app.id),
         key_rate=key_rate,
         as_of=as_of,
         avg_monthly_turnover=stats.avg_monthly,

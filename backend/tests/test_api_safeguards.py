@@ -139,6 +139,49 @@ def test_application_stuck_before_handlers_existed_goes_to_specialist(login, mon
     assert c.get(app["id"])["status"] == "OFFER_READY"
 
 
+# --------------------------------------------------------------------------- запросы уточнений
+
+
+def test_only_revenue_requests_count_towards_revenue_rounds(login):
+    """Политика просит выписку не больше двух раз, а дальше отдаёт расхождение специалисту. В этот счёт идут
+    только запросы выписки: запросы с проверки полноты (не хватает документа, не указана выручка) и запросы
+    специалиста — про другое, и два таких запроса не должны отправлять заявку специалисту «за неустранённое
+    расхождение», о котором клиента ни разу не спрашивали."""
+    from app.db import SessionLocal
+    from app.domain.policy import REVENUE_STATEMENT_ITEM
+    from app.models import InfoRequest
+    from app.services.assessment import revenue_info_rounds
+
+    c = login("morozov")
+    app = c.draft("OVERDRAFT", "CASH_GAP", 300_000, 12)
+    other = c.draft("OVERDRAFT", "CASH_GAP", 200_000, 12)
+
+    def request(app_id: str, *codes: str) -> None:
+        with SessionLocal() as db:
+            db.add(
+                InfoRequest(
+                    application_id=app_id,
+                    items=[{"code": code, "type": "DOCUMENT", "doc_type": "OTHER", "label": code} for code in codes],
+                    message="Дополните заявку",
+                    status="ANSWERED",
+                )
+            )
+            db.commit()
+
+    with SessionLocal() as db:
+        assert revenue_info_rounds(db, app["id"]) == 0
+    request(app["id"], "doc_contract_copy")
+    request(app["id"], "declared_revenue", "contact")
+    request(other["id"], REVENUE_STATEMENT_ITEM, "revenue_explanation")  # чужая заявка не считается
+    with SessionLocal() as db:
+        assert revenue_info_rounds(db, app["id"]) == 0
+    request(app["id"], REVENUE_STATEMENT_ITEM, "revenue_explanation")
+    with SessionLocal() as db:
+        assert revenue_info_rounds(db, app["id"]) == 1
+    for a in (app, other):
+        c.call("POST", _url(a, "/cancel"))
+
+
 # --------------------------------------------------------------------------- отправка черновика
 
 
