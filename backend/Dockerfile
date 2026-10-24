@@ -7,6 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# обновления безопасности базового образа: в CI Trivy останавливает сборку на критических уязвимостях
+# с доступным исправлением, а базовый образ пересобирается реже, чем выходят исправления
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Зависимости ставятся строго по lock-файлу с проверкой хешей

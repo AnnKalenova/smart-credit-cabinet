@@ -8,6 +8,9 @@ COPY . .
 RUN npm run build
 
 FROM nginx:1.27-alpine
+# обновления безопасности базового образа: в CI Trivy останавливает сборку на критических уязвимостях
+# с доступным исправлением, а базовый образ пересобирается реже, чем выходят исправления (например, OpenSSL)
+RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /web/dist /usr/share/nginx/html
 EXPOSE 80
