@@ -286,17 +286,19 @@ def _save_document(
 
 
 @router.post("/{app_id}/documents", response_model=DocumentOut, status_code=201, summary="Загрузить документ")
-async def upload_document(
+def upload_document(
     app_id: uuid.UUID,
     doc_type: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(client_only),
 ):
+    # обычная (не async) функция, как и остальные маршруты: запись файла и запросы к БД идут в пуле потоков
+    # и не останавливают цикл событий сервера на время загрузки
     app, _ = get_client_application(db, user, app_id)
     _require_status(app, AppStatus.DRAFT, AppStatus.NEEDS_INFO)
     limit = settings.max_upload_mb * 1024 * 1024
-    content = await file.read(limit + 1)
+    content = file.file.read(limit + 1)
     if len(content) > limit:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"Файл больше {settings.max_upload_mb} МБ")
     file_name = file.filename or "document"
