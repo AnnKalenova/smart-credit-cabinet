@@ -167,6 +167,27 @@ def test_request_id_from_outside_is_validated(api):
 
 
 # --------------------------------------------------------------------------- файлы
+def test_exhausted_db_pool_returns_503_not_500(api, login, monkeypatch):
+    """Все соединения с БД заняты: сервис перегружен, а не сломан — 503 с Retry-After и понятным текстом,
+    чтобы кабинет предложил повторить, а не показал «внутренняя ошибка»."""
+    from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+    from app.db import get_db
+    from app.main import app as service
+
+    u = login("smirnov")
+
+    def exhausted():
+        raise PoolTimeout("QueuePool limit of size 20 overflow 20 reached, connection timed out, timeout 10.00")
+        yield  # генератор, как и настоящая зависимость get_db
+
+    monkeypatch.setitem(service.dependency_overrides, get_db, exhausted)
+    resp = api.get("/api/v1/applications", params={"company_id": u.company_id}, headers=u.headers)
+    assert resp.status_code == 503 and resp.headers["Retry-After"] == "5"
+    assert resp.json()["detail"] == "Сервис перегружен. Попробуйте ещё раз через несколько секунд"
+    assert len(resp.json()["request_id"]) == 32
+
+
 
 
 def test_dangerous_file_names_are_neutralized(login):

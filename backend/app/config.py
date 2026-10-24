@@ -12,7 +12,15 @@ class Settings(BaseSettings):
     environment: str = "local"
 
     database_url: str = "postgresql+psycopg://credit:credit@localhost:5432/credit"
-    db_pool_size: int = 10
+    # Пул соединений с БД — по числу потоков, в которых FastAPI выполняет обычные (не async) маршруты (40):
+    # при всплеске запросов они ждут поток, а не соединение. Если соединения всё же кончились, запрос ждёт
+    # не дольше db_pool_timeout_seconds и получает 503 «попробуйте позже», а не 500 через полминуты.
+    # Экземпляру API нужно до pool_size + max_overflow соединений; воркер выполняет один этап за раз и держит
+    # 1–2 соединения. При нескольких экземплярах API поднимите max_connections PostgreSQL (по умолчанию 100)
+    # или поставьте перед ним PgBouncer
+    db_pool_size: int = 20
+    db_max_overflow: int = 20
+    db_pool_timeout_seconds: float = 10.0
 
     jwt_secret: str = "dev-only-secret-change-me-0123456789abcdef"
     jwt_ttl_minutes: int = 480

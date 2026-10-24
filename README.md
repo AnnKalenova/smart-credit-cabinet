@@ -232,6 +232,7 @@ npx newman run docs/postman/smart-credit-cabinet.postman_collection.json   # 92 
 | `PIPELINE_STAGE_DELAY_SECONDS` | 1.2 | пауза между этапами, чтобы в демо было видно движение заявки; в бою 0 |
 | `INTEGRATION_TIMEOUT_SECONDS` / `INTEGRATION_MAX_ATTEMPTS` / `INTEGRATION_BACKOFF_BASE_SECONDS` | 5 / 5 / 2 | сколько ждать внешнюю систему, сколько раз повторять и с какой паузой |
 | `OFFER_VALID_DAYS` / `MANUAL_REVIEW_SLA_HOURS` | 10 / 4 | сколько действует предложение и за сколько часов специалист должен решить |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT_SECONDS` | 20 / 20 / 10 | соединений с БД у экземпляра API (по числу потоков, в которых выполняются запросы) и сколько ждать свободное, прежде чем ответить 503 «сервис перегружен» |
 
 ### Без Docker
 

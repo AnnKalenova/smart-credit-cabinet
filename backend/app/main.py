@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram
 from sqlalchemy.exc import DataError
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.orm.exc import StaleDataError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -123,6 +124,21 @@ async def observe(request: Request, call_next):
     started = time.perf_counter()
     try:
         response = await call_next(request)
+    except PoolTimeout:
+        # Все соединения с БД заняты дольше db_pool_timeout_seconds: сервис перегружен, а не сломан.
+        # Клиент получает 503 с Retry-After и понятный текст, а не 500 после долгого ожидания
+        log.warning(
+            "нет свободных соединений с БД",
+            extra={"request_id": request_id, "method": request.method, "path": request.url.path},
+        )
+        response = JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Сервис перегружен. Попробуйте ещё раз через несколько секунд",
+                "request_id": request_id,
+            },
+            headers={"Retry-After": "5"},
+        )
     except Exception:
         # Непредвиденная ошибка: структурированный лог с request_id и понятный ответ вместо трейсбека
         log.exception(
