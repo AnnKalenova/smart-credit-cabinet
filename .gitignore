@@ -11,4 +11,5 @@ frontend/dist/
 *.log
 /data/uploads/
 e2e/screenshots-tmp/
+loadtest/out/
 .DS_Store

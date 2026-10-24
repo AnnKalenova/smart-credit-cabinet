@@ -173,7 +173,8 @@ npx newman run docs/postman/smart-credit-cabinet.postman_collection.json   # 92 
 - Если воркер упал посреди этапа, этап возвращается в очередь.
 - У каждого контейнера есть проверка здоровья.
 - Логи в JSON со сквозным `request_id` и метрики Prometheus.
-- Миграции, lock-файлы с хешами, CI: Ruff и ESLint, тесты, сквозные сценарии, Postman и проверки в браузере.
+- Миграции, lock-файлы с хешами, CI: Ruff и ESLint, тесты, сквозные сценарии, Postman и проверки в браузере; зависимости и Docker-образы проверяются на известные уязвимости (pip-audit, npm audit, Trivy).
+- Целевые показатели конвейера и нагрузочный прогон (50 и 100 заявок одновременно, 1 и 3 воркера) — в [docs/slo.md](docs/slo.md).
 
 Подробности — в [docs/architecture.md](docs/architecture.md).
 
@@ -264,6 +265,7 @@ python -m pip install httpx==0.28.1 playwright==1.64.1
 python -m playwright install chromium
 python e2e/api_scenarios.py --base-url http://localhost:8080   # сквозные сценарии на стенде
 python e2e/ui_checks.py --base-url http://localhost:8080       # проверки интерфейса в браузере (Playwright)
+pip install locust && locust -f loadtest/locustfile.py --headless --host http://localhost:8080 -u 50 -r 50 --run-time 10m --csv loadtest/out/50x1 --only-summary   # нагрузка: 50 заявок одновременно (docs/slo.md)
 python e2e/ui_tour.py --base-url http://localhost:8080         # прогон в браузере со скриншотами
 ```
 
@@ -297,6 +299,7 @@ pytest tests/test_finance.py tests/test_scoring.py tests/test_policy.py tests/te
 | [docs/postman/](docs/postman/smart-credit-cabinet.postman_collection.json) | **коллекция запросов** Postman со сквозными сценариями |
 | [docs/test-scenarios.md](docs/test-scenarios.md) | **тестовые сценарии**: автоматические проверки и ручная проверка по шагам |
 | [docs/assumptions.md](docs/assumptions.md) | допущения, какие интеграции заменены и как работает демо-режим |
+| [docs/slo.md](docs/slo.md) | **целевые показатели** конвейера и API, как они измеряются, результаты нагрузочного прогона (`loadtest/`) |
 | [docs/screenshots/](docs/screenshots) | скриншоты по шагам сценария |
 | [deploy/README.md](deploy/README.md) | публикация на сервере: настройка сервера, домен, HTTPS, обновление |
 | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) | сторонние компоненты и лицензии, оформление, смоделированные интеграции |
@@ -333,6 +336,7 @@ integrations-mock/       заглушки ЕГРЮЛ/ЕГРИП, ФНС, БКИ,
 frontend/                интерфейс (React + TypeScript) и настройки nginx
 data/synthetic/          демо-компании и их данные
 e2e/                     сквозные сценарии через API и прогон в браузере
+loadtest/                нагрузочный прогон конвейера (Locust) и сводка результатов для docs/slo.md
 tools/                   генераторы данных, Postman-коллекции, OpenAPI, диаграмм и картинок для README
 docs/                    документация, диаграммы, OpenAPI, Postman, скриншоты
 deploy/                  публикация на сервере: Caddy с HTTPS, скрипты запуска и сброса демо-данных
