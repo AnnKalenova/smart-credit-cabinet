@@ -10,7 +10,7 @@
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
-![Тесты](https://img.shields.io/badge/тесты-238%20pytest%2C%2010%20e2e-0B7A2E)
+![Тесты](https://img.shields.io/badge/тесты-244%20pytest%2C%2010%20e2e%2C%2011%20в%20браузере-0B7A2E)
 
 Кредит для малого бизнеса без походов в банк и пачки справок. Предприниматель заходит в кабинет, говорит, на что нужны деньги, и дальше всё делает сам: подбирает кредит, подаёт заявку, видит, как банк её проверяет, получает предложение, подписывает договор кодом — и деньги приходят на счёт.
 
@@ -232,8 +232,8 @@ npx newman run docs/postman/smart-credit-cabinet.postman_collection.json   # 92 
 | `DEFAULT_KEY_RATE` | 14.0 | ключевая ставка при первом запуске, потом меняется в интерфейсе |
 | `PIPELINE_STAGE_DELAY_SECONDS` | 1.2 | пауза между этапами, чтобы в демо было видно движение заявки; в бою 0 |
 | `INTEGRATION_TIMEOUT_SECONDS` / `INTEGRATION_MAX_ATTEMPTS` / `INTEGRATION_BACKOFF_BASE_SECONDS` | 5 / 5 / 2 | сколько ждать внешнюю систему, сколько раз повторять и с какой паузой |
-| `OFFER_VALID_DAYS` / `MANUAL_REVIEW_SLA_HOURS` | 10 / 4 | сколько действует предложение и за сколько часов специалист должен решить |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT_SECONDS` | 20 / 20 / 10 | соединений с БД у экземпляра API (по числу потоков, в которых выполняются запросы) и сколько ждать свободное, прежде чем ответить 503 «сервис перегружен» |
+| `OFFER_VALID_DAYS` / `MANUAL_REVIEW_SLA_HOURS` | 10 / 4 | сколько действует предложение и за сколько часов специалист должен решить |
 
 ### Без Docker
 
@@ -257,7 +257,7 @@ cd ../frontend && npm ci && npm run dev   # http://localhost:5173, /api уход
 ## Тесты
 
 ```bash
-cd backend && pytest                       # 238 тестов: 133 модульных и 105 интеграционных
+cd backend && pytest                       # 244 теста: 134 модульных и 110 интеграционных
 ruff check . && ruff format --check .      # линтер и форматирование
 cd ../frontend && npm run lint && npm run build   # ESLint, проверка типов TypeScript и сборка
 cd ..                                      # вернуться в корень: каталог e2e находится здесь

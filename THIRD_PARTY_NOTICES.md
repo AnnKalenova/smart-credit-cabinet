@@ -95,5 +95,7 @@
 | newman | Apache-2.0 | запуск Postman-коллекции из командной строки |
 | mermaid | MIT | рендер диаграмм для документации (`tools/render_diagrams.py`) |
 | [UI/UX Pro Max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill), [Taste](https://github.com/Leonxlnx/taste-skill) | MIT | чек-листы по интерфейсам (контраст, состояния, мобильная вёрстка), по которым проверялся дизайн |
-| GitHub Actions | сервис GitHub | CI: линтер, тесты, сборка, запуск в Docker |
+| Locust | MIT | нагрузочный прогон конвейера (`loadtest/`) |
+| pip-audit, npm audit, [Trivy](https://github.com/aquasecurity/trivy) | Apache-2.0 (pip-audit, Trivy), часть npm | проверка зависимостей и Docker-образов на известные уязвимости в CI |
+| GitHub Actions | сервис GitHub | CI: линтер, тесты, сборка, запуск в Docker, проверка уязвимостей |
 | Claude (Anthropic) | коммерческий сервис | ИИ-ассистент при написании кода и документации; в решение не встроен |
