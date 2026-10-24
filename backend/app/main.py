@@ -96,7 +96,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Умный кредитный кабинет предпринимателя — API",
-    version="1.1.0",
+    version="1.1.2",
     description=DESCRIPTION,
     docs_url="/api/docs",
     redoc_url="/api/redoc",
