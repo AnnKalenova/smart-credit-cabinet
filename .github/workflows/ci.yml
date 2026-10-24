@@ -47,10 +47,14 @@ jobs:
             backend/requirements-dev.txt
       - name: Зависимости (строго по lock-файлам с хешами)
         run: pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+      - name: pip-audit — известные уязвимости в Python-зависимостях (API, воркер, симулятор)
+        run: >-
+          pip-audit --require-hashes --disable-pip --progress-spinner off
+          -r requirements.txt -r requirements-dev.txt -r ../integrations-mock/requirements.txt
       - name: Ruff — линтер
-        run: ruff check . ../integrations-mock ../e2e ../tools
+        run: ruff check . ../integrations-mock ../e2e ../tools ../loadtest
       - name: Ruff — форматирование
-        run: ruff format --check . ../integrations-mock ../e2e ../tools
+        run: ruff format --check . ../integrations-mock ../e2e ../tools ../loadtest
       - name: Pytest — модульные и интеграционные тесты
         run: pytest
       - name: OpenAPI в docs/ совпадает с кодом
@@ -72,10 +76,47 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - name: npm audit — известные уязвимости в зависимостях интерфейса (high и выше)
+        run: npm audit --audit-level=high
       - name: ESLint — TypeScript и правила хуков React
         run: npm run lint
       - name: Проверка типов и сборка
         run: npm run build
+
+  images:
+    name: Docker-образы — уязвимости (Trivy)
+    needs: [backend, frontend]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, web, integrations-mock]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сборка образа
+        run: docker compose build ${{ matrix.service }}
+      - name: Имя собранного образа
+        id: image
+        run: echo "ref=$(docker compose config --format json | jq -r '.services["${{ matrix.service }}"].image')" >> "$GITHUB_OUTPUT"
+      # Действие закреплено по хешу коммита (v0.36.0), а не по тегу: теги действий уже подменяли в атаке на цепочку
+      # поставок. Критические уязвимости с доступным исправлением останавливают сборку; высокие — в отчёте
+      - name: Критические уязвимости (с исправлением) — сборка останавливается
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.ref }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Высокие уязвимости — отчёт
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.ref }}
+          severity: HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+          skip-setup-trivy: true
 
   e2e-docker:
     name: Docker Compose — сквозные сценарии

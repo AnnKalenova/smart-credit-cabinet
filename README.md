@@ -309,7 +309,7 @@ pytest tests/test_finance.py tests/test_scoring.py tests/test_policy.py tests/te
 | Код в GitHub с историей коммитов и понятной версией | история коммитов; в заявке на отбор — точный commit hash (`git rev-parse HEAD`) и новый тег сдачи после проверок |
 | Cloud-native, запуск в Docker одной командой | `docker-compose.yml`, `docker compose up -d --build` |
 | Публикация в облаке (желательно) | [deploy/](deploy/README.md): тот же Compose за Caddy с HTTPS от Let's Encrypt |
-| Зафиксированные версии языка и библиотек | `requirements.txt` с хешами, `package-lock.json`, теги образов |
+| Зафиксированные версии языка и библиотек | `requirements.txt` с хешами, `package-lock.json`, теги образов; в CI — pip-audit, npm audit и Trivy на известные уязвимости |
 | README: назначение, архитектура, окружение, запуск, переменные, компоненты, сценарий проверки | этот файл |
 | Синтетические данные и тестовые учётки | `data/synthetic/companies.json`, генератор `tools/generate_synthetic_data.py`, [таблица учёток](#кем-войти) |
 | THIRD_PARTY_NOTICES | [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
