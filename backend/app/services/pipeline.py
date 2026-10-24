@@ -514,6 +514,48 @@ FAILURE_HANDLERS = {
 
 AUTOMATIC_STAGES = (JobStage.PRECHECK, JobStage.ENRICHMENT, JobStage.SCORING, JobStage.DECISION)
 
+# этап, который воркер взял и не завершил за это время, считается брошенным (воркер упал или его убили)
+ABANDONED_AFTER = timedelta(minutes=5)
+
+
+def requeue_abandoned_jobs(db: Session) -> tuple[int, int]:
+    """Брошенные этапы возвращаются в очередь. Но если воркеры падали на этапе уже столько раз, сколько у него
+    попыток, в очередь он не возвращается: иначе задача, которая роняет воркер (нехватка памяти, убит по сигналу),
+    крутилась бы вечно. Такой этап отмечается как невыполненный, и заявка уходит специалисту тем же обработчиком,
+    что и после ошибки с исчерпанными повторами. Возвращает (сколько вернули в очередь, сколько передали)."""
+    jobs = db.scalars(
+        select(PipelineJob)
+        .where(PipelineJob.status == JobStatus.RUNNING, PipelineJob.locked_at < utcnow() - ABANDONED_AFTER)
+        .with_for_update(skip_locked=True)
+    ).all()
+    requeued = failed = 0
+    for job in jobs:
+        if job.attempts < job.max_attempts:
+            job.status = JobStatus.PENDING
+            job.locked_by = None
+            requeued += 1
+            continue
+        job.status = JobStatus.FAILED
+        job.finished_at = utcnow()
+        job.last_error = f"воркер не завершил этап, попытки исчерпаны ({job.attempts} из {job.max_attempts})"
+        failed += 1
+    db.commit()
+    for job in jobs:
+        if job.status != JobStatus.FAILED:
+            continue
+        app = db.get(Application, job.application_id)
+        try:
+            FAILURE_HANDLERS[JobStage(job.stage)](db, app, RuntimeError(job.last_error))
+            db.commit()
+        except StaleDataError:
+            db.rollback()  # заявку в это же время изменили — её подхватит recover_stuck_applications
+        except Exception:  # noqa: BLE001 — одна заявка не должна мешать остальным
+            db.rollback()
+            log.exception(
+                "не удалось передать специалисту заявку с брошенного этапа", extra={"application": app.number}
+            )
+    return requeued, failed
+
 
 def stuck_applications(db: Session) -> list[tuple[Application, PipelineJob]]:
     """Заявки на автоматическом этапе, последняя задача которого упала и больше не повторяется. Так бывает,

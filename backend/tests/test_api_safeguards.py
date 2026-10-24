@@ -5,7 +5,7 @@
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select, update
@@ -134,6 +134,74 @@ def test_application_stuck_before_handlers_existed_goes_to_specialist(login, mon
     assert reason["code"] == "technical_failure" and "сбой в модели" in reason["text"]
     housekeeping()  # повторный проход ничего не меняет
     assert len(a.call("GET", _bank(app))["decisions"]) == 1
+    a.call("POST", _bank(app, "/rerun"))
+    drain()
+    assert c.get(app["id"])["status"] == "OFFER_READY"
+
+
+def test_abandoned_stage_returns_to_queue_then_goes_to_specialist(login, monkeypatch):
+    """Воркер взял этап и умер (убит по сигналу, нехватка памяти): этап возвращается в очередь. Но этап, на котором
+    воркеры падали все отведённые попытки, не крутится вечно — заявка уходит специалисту."""
+    import app.services.pipeline as pipeline
+    from app.db import SessionLocal
+    from app.models import PipelineJob
+    from app.services.workflow import utcnow
+    from app.worker.runner import housekeeping
+
+    class WorkerKilled(BaseException):  # не Exception: воркер не обрабатывает такую ошибку, а просто умирает
+        pass
+
+    def killed(*args, **kwargs):
+        raise WorkerKilled
+
+    monkeypatch.setitem(pipeline.HANDLERS, "SCORING", killed)
+    c = login("smirnov")
+    app = c.draft("EXPRESS", "OTHER", 330_000, 6)
+    c.sign_consents(app["id"])
+    c.submit(app["id"])
+    with pytest.raises(WorkerKilled):
+        drain()
+
+    def job_state() -> tuple[str, int]:
+        with SessionLocal() as db:
+            job = db.scalar(
+                select(PipelineJob).where(PipelineJob.application_id == app["id"], PipelineJob.stage == "SCORING")
+            )
+            return job.status, job.attempts
+
+    def abandon(**values) -> None:
+        with SessionLocal() as db:
+            db.execute(
+                update(PipelineJob)
+                .where(PipelineJob.application_id == app["id"], PipelineJob.stage == "SCORING")
+                .values(locked_at=utcnow() - pipeline.ABANDONED_AFTER - timedelta(seconds=1), **values)
+            )
+            db.commit()
+
+    assert job_state() == ("RUNNING", 1)  # этап остался за погибшим воркером
+    housekeeping()
+    assert job_state() == ("RUNNING", 1)  # пять минут ещё не прошли — этап не трогаем
+    abandon()
+    housekeeping()
+    assert job_state() == ("PENDING", 1)  # попытки ещё есть — этап снова в очереди
+    assert c.get(app["id"])["status"] == "SCORING"
+
+    with pytest.raises(WorkerKilled):
+        drain()  # другой воркер взял этап и тоже погиб
+    with SessionLocal() as db:
+        max_attempts = db.scalar(select(PipelineJob.max_attempts).where(PipelineJob.application_id == app["id"]))
+    abandon(attempts=max_attempts)
+    housekeeping()
+    assert job_state() == ("FAILED", max_attempts)
+    app = c.get(app["id"])
+    assert app["status"] == "MANUAL_REVIEW" and app["review_due_at"]
+    a = login("analyst")
+    reason = a.call("GET", _bank(app))["decisions"][0]["reasons"][0]
+    assert reason["code"] == "technical_failure" and "воркер не завершил этап" in reason["text"]
+    housekeeping()  # повторный проход ничего не меняет
+    assert len(a.call("GET", _bank(app))["decisions"]) == 1
+
+    monkeypatch.undo()  # причину падения устранили
     a.call("POST", _bank(app, "/rerun"))
     drain()
     assert c.get(app["id"])["status"] == "OFFER_READY"

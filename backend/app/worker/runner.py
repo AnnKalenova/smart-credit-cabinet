@@ -16,7 +16,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -26,7 +26,13 @@ from app.domain.enums import JobStatus
 from app.integrations.client import SERVICE_TITLES, IntegrationError
 from app.logging_setup import setup_logging
 from app.models import Application, PipelineJob
-from app.services.pipeline import FAILURE_HANDLERS, HANDLERS, expire_offers, recover_stuck_applications
+from app.services.pipeline import (
+    FAILURE_HANDLERS,
+    HANDLERS,
+    expire_offers,
+    recover_stuck_applications,
+    requeue_abandoned_jobs,
+)
 from app.services.workflow import utcnow
 
 settings = get_settings()
@@ -159,12 +165,13 @@ class Heartbeat:
 
 def housekeeping() -> None:
     with SessionLocal() as db:
-        # «Зависшие» этапы упавшего воркера возвращаются в очередь
-        db.execute(
-            update(PipelineJob)
-            .where(PipelineJob.status == JobStatus.RUNNING, PipelineJob.locked_at < utcnow() - timedelta(minutes=5))
-            .values(status=JobStatus.PENDING, locked_by=None)
-        )
+        # «Зависшие» этапы упавшего воркера возвращаются в очередь, а те, на которых воркеры падали
+        # уже все отведённые попытки, — передаются специалисту (иначе такой этап крутился бы вечно)
+        requeued, abandoned = requeue_abandoned_jobs(db)
+        if requeued:
+            log.warning("брошенные этапы возвращены в очередь", extra={"count": requeued})
+        if abandoned:
+            log.error("этапы, ронявшие воркер, переданы специалисту", extra={"count": abandoned})
         expired = expire_offers(db)
         db.commit()
         if expired:
